@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
-# Integration test on macOS: mount_smbfs against a local server on a high
-# port, as an ordinary user, with nothing configured on the machine.
+# Integration test on Windows, run from Git Bash as an administrator: the
+# kernel redirector ("net use") against a local server.
 #
-# usage: macos.sh <bin-dir> [results-dir]
+# The redirector only ever connects to port 445, which the machine's own SMB
+# server holds. The test frees it by stopping that service and its drivers,
+# which a CI runner can afford; the relay then listens on 445 in front of the
+# server, so the cut test works as on the other systems.
+#
+# usage: windows.sh <bin-dir> [results-dir]
 set -u
+export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
-bin=$(cd "${1:?usage: macos.sh <bin-dir> [results-dir]}" && pwd)
+bin=$(cd "${1:?usage: windows.sh <bin-dir> [results-dir]}" && pwd)
 results=${2:-$(mktemp -d)}
 mkdir -p "$results"
 here=$(cd "$(dirname "$0")" && pwd)
 
 port=1445
-relay=1446
 control=1447
 user=dev
 password=s3cret-pass
 share=vol
-# The physical path: mount(8) reports /private/var where mktemp says /var.
-work=$(cd "$(mktemp -d)" && pwd -P)
+drive=S
+work=$(mktemp -d)
 root=$work/root
-mnt=$work/mnt
 failed=0
-out=$results/macos-smbfs.txt
+out=$results/windows.txt
 : >"$out"
 
 step() { printf '\n== %s\n' "$*"; }
@@ -40,9 +44,7 @@ record() {
 cut() { (exec 3<>/dev/tcp/127.0.0.1/$control) 2>/dev/null; }
 
 cleanup() {
-	for m in "$mnt" "$work/bad"; do
-		umount "$m" 2>/dev/null || diskutil unmount force "$m" >/dev/null 2>&1
-	done
+	net use $drive: /delete /y >/dev/null 2>&1
 	kill "$server_pid" "$relay_pid" 2>/dev/null
 	if test "$failed" != 0; then
 		echo "---- server log"
@@ -52,46 +54,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$root" "$mnt" "$work/bad"
-"$bin/smbserver" -root "$root" -addr 127.0.0.1:$port -share $share -user $user -password "$password" -v >"$work/server.log" 2>&1 &
+step "free port 445"
+# The server service first, then the drivers under it, in dependency order.
+net stop LanmanServer /y
+for svc in srv2 srvnet; do sc stop $svc; done
+sleep 3
+netstat -ano | grep ':445 ' || echo "port 445 is free"
+
+mkdir -p "$root"
+SMBSERVER_TRACE="${SMBSERVER_TRACE:-}" "$bin/smbserver.exe" -root "$(cygpath -w "$root")" -addr 127.0.0.1:$port -share $share -user $user -password "$password" -v >"$work/server.log" 2>&1 &
 server_pid=$!
-"$bin/tcpcut" -listen 127.0.0.1:$relay -to 127.0.0.1:$port -control 127.0.0.1:$control >"$work/relay.log" 2>&1 &
+"$bin/tcpcut.exe" -listen 127.0.0.1:445 -to 127.0.0.1:$port -control 127.0.0.1:$control >"$work/relay.log" 2>&1 &
 relay_pid=$!
 for _ in $(seq 1 50); do
-	(exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null && break
-	sleep 0.1
+	(exec 3<>/dev/tcp/127.0.0.1/445) 2>/dev/null && break
+	sleep 0.2
 done
+cat "$work/relay.log"
 
-step "mount_smbfs, through the relay"
-# -N: never prompt. A mount that needs a dialog is a failed mount.
-t_mount() { mount_smbfs -N "//$user:$password@127.0.0.1:$relay/$share" "$mnt"; }
-# Before any good mount: macOS reuses an authenticated session to a server
-# for later mounts, whatever password they carry.
-t_bad_password() {
-	if mount_smbfs -N "//$user:wrong@127.0.0.1:$port/$share" "$work/bad" 2>/dev/null; then
-		umount "$work/bad"
-		return 1
-	fi
-}
+step "net use"
+unc='\\127.0.0.1\'$share
+t_bad_password() { ! net use $drive: "$unc" wrong-password /user:$user /persistent:no >/dev/null 2>&1; }
+t_mount() { net use $drive: "$unc" "$password" /user:$user /persistent:no; }
 record bad-password-refused t_bad_password
+net use $drive: /delete /y >/dev/null 2>&1
 record mount t_mount
 
-if mount | grep -q " on $mnt (smbfs"; then
+mnt=/${drive,,}
+if test -d "$mnt/"; then
 	BIG_MB=${BIG_MB:-1024} bash "$here/fsops.sh" "$mnt" "$work/fsops.txt" || failed=1
 	cat "$work/fsops.txt" >>"$out"
 
 	step "no trace left in the volume"
 	t_no_traces() {
-		# What a developer's tools do on a Mac: copy a file that carries
-		# extended attributes, browse, remove. None of it may leave
-		# AppleDouble or Finder files behind on the server.
-		printf data >"$work/local" && xattr -w com.example.note hello "$work/local" &&
-			xattr -w com.apple.quarantine '0081;00000000;test;' "$work/local" || return 1
-		mkdir "$mnt/traces" && cp "$work/local" "$mnt/traces/copied" && cp -p "$work/local" "$mnt/traces/copied-p" &&
-			ls -la "$mnt/traces" >/dev/null && test "$(cat "$mnt/traces/copied")" = data || return 1
-		sync
+		mkdir "$mnt/traces" && printf data >"$mnt/traces/file" && ls -la "$mnt/traces" >/dev/null || return 1
+		cmd /c "dir $drive:\\traces" >/dev/null
 		local found
-		found=$(find "$root" \( -name '._*' -o -name '.DS_Store' -o -name '.Trashes' -o -name '.fseventsd' -o -name '.Spotlight-V100' \) | head -n 5)
+		found=$(find "$root" \( -iname 'Thumbs.db' -o -iname 'desktop.ini' -o -iname '$RECYCLE.BIN' -o -iname 'System Volume Information' \) | head -n 5)
 		rm -rf "$mnt/traces"
 		test -z "$found" || { echo "left behind: $found"; return 1; }
 	}
@@ -126,7 +125,7 @@ if mount | grep -q " on $mnt (smbfs"; then
 	record reconnect-after-cut-during-copy t_cut_busy
 	record reconnect-after-repeated-cuts t_cut_repeated
 
-	t_umount() { umount "$mnt"; }
+	t_umount() { net use $drive: /delete /y; }
 	record unmount t_umount
 fi
 

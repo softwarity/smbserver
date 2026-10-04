@@ -63,6 +63,7 @@ jobs:
   linux:
     name: Linux clients (smbclient, cifs, docker volume)
     needs: test
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -89,6 +90,7 @@ jobs:
   macos:
     name: macOS client (mount_smbfs)
     needs: test
+    timeout-minutes: 30
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -105,9 +107,31 @@ jobs:
           name: results-macos
           path: results/*.txt
 
+  windows:
+    name: Windows client (redirector)
+    needs: test
+    timeout-minutes: 30
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
+        shell: bash
+        run: go build -o bin/ ./cmd/smbserver ./test/tcpcut
+      - name: Map and exercise the share
+        shell: bash
+        run: bash test/windows.sh bin results
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: results-windows
+          path: results/*.txt
+
   matrix:
     name: Compatibility matrix
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     if: always()
     runs-on: ubuntu-latest
     permissions:

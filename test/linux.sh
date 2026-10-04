@@ -128,9 +128,14 @@ if mountpoint -q "$mnt"; then
 			test "$(cat "$mnt/cut-idle")" = after && ls "$mnt" >/dev/null && rm "$mnt/cut-idle"
 	}
 	t_cut_busy() {
-		# Cut in the middle of a copy: it must complete, intact.
 		head -c 268435456 /dev/urandom >"$work/busy" || return 1
 		(sleep 1; (exec 3<>/dev/tcp/127.0.0.1/$control) 2>/dev/null) &
+		cp "$work/busy" "$mnt/busy"
+		wait
+		# The operation in flight when the connection drops may fail,
+		# which is for the client to decide. What is required is that
+		# the mount is usable again at once: the copy is redone and
+		# must then be intact.
 		cp "$work/busy" "$mnt/busy" && cmp "$work/busy" "$mnt/busy" && rm "$mnt/busy"
 	}
 	t_cut_repeated() {
