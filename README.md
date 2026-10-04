@@ -295,7 +295,7 @@ mount and has checks of its own, and the dialect can only be pinned on cifs.
 | reconnect-after-repeated-cuts | · | ✅ | · | ✅ | ✅ |
 | unmount | · | ✅ | · | ✅ | ✅ |
 | mount-pinned-to-smb-3.0 | · | ✅ | · | · | · |
-| finder-copy-browse-delete | · | · | · | ❌ | · |
+| finder-browse-copy-rename | · | · | · | ✅ | · |
 | explorer-copy-browse-streams | · | · | · | · | ✅ |
 <!-- matrix:end -->
 
@@ -308,10 +308,10 @@ three, client caches dropped before each.
 <!-- bench:start -->
 | Operation | smbserver | Samba 4.19.5-Ubuntu | Ratio |
 |---|--:|--:|--:|
-| Create 1000 files of 4 KiB | 2.26 s | 2.91 s | 0.8 |
-| Read 1000 files of 4 KiB | 0.55 s | 0.44 s | 1.2 |
-| List a directory of 5000 files | 0.89 s | 1.51 s | 0.6 |
-| Write 100 MiB | 0.17 s | 0.16 s | 1.1 |
+| Create 1000 files of 4 KiB | 2.25 s | 2.86 s | 0.8 |
+| Read 1000 files of 4 KiB | 0.56 s | 0.44 s | 1.3 |
+| List a directory of 5000 files | 0.90 s | 1.53 s | 0.6 |
+| Write 100 MiB | 0.17 s | 0.18 s | 0.9 |
 | Read 100 MiB | 0.19 s | 0.18 s | 1.1 |
 <!-- bench:end -->
 
