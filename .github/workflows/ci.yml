@@ -246,14 +246,15 @@ jobs:
             fi
             echo "main moved from ${TESTED::7} to ${head::7} by documentation only; releasing ${head::7} with this run's green"
           fi
-      - name: Commit as the App
+      - name: Who the App commits as
+        id: who
         env:
           SLUG: ${{ steps.token.outputs.app-slug }}
           GH_TOKEN: ${{ github.token }}
         run: |
           id=$(gh api "users/${SLUG}[bot]" --jq .id)
-          git config user.name "${SLUG}[bot]"
-          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+          echo "name=${SLUG}[bot]" >> "$GITHUB_OUTPUT"
+          echo "email=${id}+${SLUG}[bot]@users.noreply.github.com" >> "$GITHUB_OUTPUT"
       # Renames "## NEXT RELEASE" of RELEASE_NOTES.md to the new version,
       # reopens an empty one, commits and tags, all locally. Pinned to a
       # commit like every action that is not GitHub's own.
@@ -265,6 +266,8 @@ jobs:
           language: tag
           push: "false"
           create-release: "false"
+          commit-user-name: ${{ steps.who.outputs.name }}
+          commit-user-email: ${{ steps.who.outputs.email }}
       # [skip ci]: the commit changes one Markdown file, and a pipeline
       # started by it would end on another release offer for the same code.
       - name: Push the version commit and the tag, create the GitHub Release

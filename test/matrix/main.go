@@ -85,7 +85,7 @@ func main() {
 			case "ok":
 				table.WriteString(" ✅ |")
 			case "":
-				table.WriteString("  |")
+				table.WriteString(" · |")
 			default:
 				table.WriteString(" ❌ |")
 			}

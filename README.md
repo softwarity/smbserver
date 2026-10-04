@@ -231,6 +231,9 @@ server it talks to is the Windows build of this package. A Windows client
 against a server on Linux, through port 445, is the one combination CI does
 not hold.
 
+✅ passed, ❌ failed, · not part of that client's run: `smbclient` is not a
+mount and has checks of its own, and the dialect can only be pinned on cifs.
+
 <!-- matrix:start -->
 | Operation | smbclient | Linux (cifs) | Docker volume (cifs) | macOS (mount_smbfs) | Windows (redirector) |
 |---|:-:|:-:|:-:|:-:|:-:|

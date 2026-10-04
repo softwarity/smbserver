@@ -114,10 +114,26 @@ cf=$results/linux-cifs.txt
 : >"$cf"
 opts="username=$user,password=$password,port=$relay,vers=2.1,uid=$(id -u),gid=$(id -g),noperm,hard"
 t_mount() { $sudo mount -t cifs "//127.0.0.1/$share" "$mnt" -o "$opts"; }
+t_mount_bad_password() {
+	if $sudo mount -t cifs "//127.0.0.1/$share" "$mnt" -o "${opts/password=$password/password=wrong}" 2>/dev/null; then
+		$sudo umount "$mnt"
+		return 1
+	fi
+}
+record "$cf" bad-password-refused t_mount_bad_password
 record "$cf" mount t_mount
 if mountpoint -q "$mnt"; then
 	BIG_MB=${BIG_MB:-1024} bash "$here/fsops.sh" "$mnt" "$work/fsops.txt" || failed=1
 	cat "$work/fsops.txt" >>"$cf"
+
+	# The kernel client renames a file deleted while open to a hidden
+	# name; none of those may outlive the operations.
+	t_no_traces() {
+		local found
+		found=$($sudo find "$root" -name '.*' ! -path "$root" | head -n 5)
+		test -z "$found" || { echo "left behind: $found"; return 1; }
+	}
+	record "$cf" no-traces-in-volume t_no_traces
 
 	step "survive a cut"
 	t_cut_idle() {
@@ -168,13 +184,18 @@ if command -v docker >/dev/null 2>&1 && test "${SKIP_DOCKER:-}" = ""; then
 	step "docker volume backed by cifs"
 	dv=$results/docker-volume.txt
 	: >"$dv"
-	t_docker() {
+	mkdir -p "$work/dv"
+	t_docker_mount() {
 		docker volume create --driver local -o type=cifs -o "device=//127.0.0.1/$share" \
-			-o "o=addr=127.0.0.1,username=$user,password=$password,port=$port,vers=2.1" smbserver-test >/dev/null &&
-			docker run --rm -v smbserver-test:/v busybox sh -c 'echo from-docker >/v/docker.txt && cat /v/docker.txt && ls /v >/dev/null' | grep -q from-docker &&
+			-o "o=addr=127.0.0.1,username=$user,password=$password,port=$port,vers=2.1,hard" smbserver-test >/dev/null &&
+			docker run --rm -v smbserver-test:/v debian:stable-slim sh -c 'echo from-docker >/v/docker.txt && cat /v/docker.txt' | grep -q from-docker &&
 			test "$($sudo cat "$root/docker.txt")" = from-docker
 	}
-	record "$dv" volume-read-write t_docker
+	record "$dv" mount t_docker_mount
+	# The same operations as on a direct mount, run inside a container.
+	docker run --rm -e BIG_MB=256 -v smbserver-test:/v -v "$here:/test:ro" -v "$work/dv:/out" debian:stable-slim \
+		bash /test/fsops.sh /v /out/fsops.txt || failed=1
+	cat "$work/dv/fsops.txt" >>"$dv"
 	docker volume rm -f smbserver-test >/dev/null 2>&1
 fi
 
