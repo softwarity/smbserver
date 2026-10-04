@@ -223,8 +223,11 @@ the last run on `main`: each client mounts the share and goes through the
 same operations. On Linux the server runs under a uid that exists in no
 account file, without any capability. Each mount is made without a prompt
 and with nothing configured on the client beyond the mount command itself.
-On the Windows runner the machine's own SMB server is stopped to free port
-445, since the redirector knows no other.
+On the Windows runner the redirector is pointed at a high port with
+`net use /tcpport`, which Windows Server 2025 and Windows 11 24H2 have; the
+server it talks to is the Windows build of this package. A Windows client
+against a server on Linux, through port 445, is the one combination CI does
+not hold.
 
 <!-- matrix:start -->
 | Operation | smbclient | Linux (cifs) | Docker volume (cifs) | macOS (mount_smbfs) | Windows (redirector) |

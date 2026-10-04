@@ -51,6 +51,8 @@ quick test client.
 | `spnego.go`, `ntlm.go` | SPNEGO wrapping, NTLMv2 |
 | `open.go` | CREATE, CLOSE, handle table, delete on close |
 | `io.go`, `dir.go`, `info.go`, `lock.go`, `ioctl.go` | the other commands |
+| `oplock.go` | level II oplocks, watch for changes made behind the server |
+| `streams.go` | named streams kept in memory |
 | `names.go` | path validation, character mapping, wildcards |
 | `stat*.go` | per-OS file metadata and disk space |
 | `cmd/smbserver` | command for manual tests and CI |
@@ -79,6 +81,8 @@ quick test client.
 go test -race ./...
 bash test/linux.sh bin results   # needs sudo, smbclient, cifs-utils
 bash test/macos.sh bin results
+bash test/windows.sh bin results # Git Bash, administrator
+bash test/bench.sh bin results   # timings against Samba
 ```
 
 From a Mac, Linux clients run in a privileged container (see the README).
