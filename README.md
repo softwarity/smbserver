@@ -237,38 +237,38 @@ On the Windows runner the machine's own SMB server is stopped to free port
 | rename-delete | ✅ |  |  |  |  |
 | files-owned-by-server-uid | ✅ |  |  |  |  |
 | no-escape | ✅ |  |  |  |  |
-| mount |  | ✅ |  | ✅ | ✅ |
-| mkdir |  | ✅ |  | ✅ | ✅ |
-| create |  | ✅ |  | ✅ | ✅ |
-| write |  | ✅ |  | ✅ | ✅ |
-| read |  | ✅ |  | ✅ | ✅ |
-| append |  | ✅ |  | ✅ | ✅ |
-| overwrite |  | ✅ |  | ✅ | ✅ |
-| list |  | ✅ |  | ✅ | ✅ |
-| list-many |  | ✅ |  | ✅ | ✅ |
-| stat |  | ✅ |  | ✅ | ✅ |
-| rename |  | ✅ |  | ✅ | ✅ |
-| rename-over |  | ✅ |  | ✅ | ✅ |
-| rename-dir |  | ✅ |  | ✅ | ✅ |
-| move-across-dirs |  | ✅ |  | ✅ | ✅ |
-| delete |  | ✅ |  | ✅ | ✅ |
-| rmdir |  | ✅ |  | ✅ | ✅ |
-| rmdir-nonempty-refused |  | ✅ |  | ✅ | ✅ |
-| rm-recursive |  | ✅ |  | ✅ | ✅ |
-| truncate |  | ✅ |  | ✅ | ✅ |
-| dates |  | ✅ |  | ✅ | ✅ |
-| statfs |  | ✅ |  | ✅ | ✅ |
-| names |  | ✅ |  | ✅ | ✅ |
-| big-file-hash |  | ✅ |  | ✅ | ✅ |
-| concurrent-writes |  | ✅ |  | ✅ | ✅ |
-| concurrent-files |  | ✅ |  | ✅ | ✅ |
-| cleanup |  | ✅ |  | ✅ | ✅ |
-| reconnect-after-cut-idle |  | ✅ |  | ✅ | ✅ |
-| reconnect-after-cut-during-copy |  | ✅ |  | ✅ | ✅ |
-| reconnect-after-repeated-cuts |  | ✅ |  | ✅ | ✅ |
-| unmount |  | ✅ |  | ✅ | ✅ |
+| mount |  | ✅ |  | ✅ | ❌ |
+| mkdir |  | ✅ |  | ✅ |  |
+| create |  | ✅ |  | ✅ |  |
+| write |  | ✅ |  | ✅ |  |
+| read |  | ✅ |  | ✅ |  |
+| append |  | ✅ |  | ✅ |  |
+| overwrite |  | ✅ |  | ✅ |  |
+| list |  | ✅ |  | ✅ |  |
+| list-many |  | ✅ |  | ✅ |  |
+| stat |  | ✅ |  | ✅ |  |
+| rename |  | ✅ |  | ✅ |  |
+| rename-over |  | ✅ |  | ✅ |  |
+| rename-dir |  | ✅ |  | ✅ |  |
+| move-across-dirs |  | ✅ |  | ✅ |  |
+| delete |  | ✅ |  | ✅ |  |
+| rmdir |  | ✅ |  | ✅ |  |
+| rmdir-nonempty-refused |  | ✅ |  | ✅ |  |
+| rm-recursive |  | ✅ |  | ✅ |  |
+| truncate |  | ✅ |  | ✅ |  |
+| dates |  | ✅ |  | ✅ |  |
+| statfs |  | ✅ |  | ✅ |  |
+| names |  | ✅ |  | ✅ |  |
+| big-file-hash |  | ✅ |  | ✅ |  |
+| concurrent-writes |  | ✅ |  | ✅ |  |
+| concurrent-files |  | ✅ |  | ✅ |  |
+| cleanup |  | ✅ |  | ✅ |  |
+| reconnect-after-cut-idle |  | ✅ |  | ✅ |  |
+| reconnect-after-cut-during-copy |  | ✅ |  | ✅ |  |
+| reconnect-after-repeated-cuts |  | ✅ |  | ✅ |  |
+| unmount |  | ✅ |  | ✅ |  |
 | volume-read-write |  |  | ✅ |  |  |
-| no-traces-in-volume |  |  |  | ✅ | ✅ |
+| no-traces-in-volume |  |  |  | ✅ |  |
 <!-- matrix:end -->
 
 ### Speed
@@ -278,6 +278,13 @@ the same machine with the same mount options, from the same CI run. Best of
 three, client caches dropped before each.
 
 <!-- bench:start -->
+| Operation | smbserver | Samba 4.19.5-Ubuntu | Ratio |
+|---|--:|--:|--:|
+| Create 1000 files of 4 KiB | 1.71 s | 2.05 s | 0.8 |
+| Read 1000 files of 4 KiB | 0.34 s | 0.30 s | 1.1 |
+| List a directory of 5000 files | 0.49 s | 0.80 s | 0.6 |
+| Write 100 MiB | 0.47 s | 0.46 s | 1.0 |
+| Read 100 MiB | 0.19 s | 0.19 s | 1.0 |
 <!-- bench:end -->
 
 ## Tests
