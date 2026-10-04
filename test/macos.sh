@@ -115,6 +115,40 @@ if mount | grep -q " on $mnt (smbfs"; then
 	}
 	record no-traces-in-volume t_no_traces
 
+	step "the Finder"
+	# The Finder itself, driven by AppleScript: it asks the server for
+	# things no shell command does. Where the system does not let a script
+	# drive it, the check is left out rather than reported as passed.
+	mkdir -p "$work/finder-src/sub" && printf one >"$work/finder-src/a.txt" && printf two >"$work/finder-src/sub/b.txt" &&
+		head -c 3000000 /dev/urandom >"$work/finder-src/blob" && xattr -w com.example.note hello "$work/finder-src/a.txt"
+	if osascript -e 'tell application "Finder" to get name of startup disk' >/dev/null 2>"$work/finder.err"; then
+		t_finder() {
+			osascript >/dev/null \
+				-e 'on run argv' \
+				-e 'set mnt to item 1 of argv' \
+				-e 'set src to item 2 of argv' \
+				-e 'with timeout of 120 seconds' \
+				-e 'tell application "Finder"' \
+				-e 'open (POSIX file mnt as alias)' \
+				-e 'duplicate (POSIX file src as alias) to (POSIX file mnt as alias)' \
+				-e 'count of items of (POSIX file (mnt & "/finder-src") as alias)' \
+				-e 'close every window' \
+				-e 'delete (POSIX file (mnt & "/finder-src/sub") as alias)' \
+				-e 'end tell' \
+				-e 'end timeout' \
+				-e 'end run' "$mnt" "$work/finder-src" || return 1
+			diff "$work/finder-src/a.txt" "$mnt/finder-src/a.txt" && cmp "$work/finder-src/blob" "$mnt/finder-src/blob" &&
+				! test -e "$mnt/finder-src/sub" || return 1
+			local found
+			found=$(find "$root" \( -name '._*' -o -name '.DS_Store' -o -name '.Trashes' \) | head -n 5)
+			rm -rf "$mnt/finder-src"
+			test -z "$found" || { echo "left behind: $found"; return 1; }
+		}
+		record finder-copy-browse-delete t_finder
+	else
+		echo "the Finder cannot be scripted here: $(tr '\n' ' ' <"$work/finder.err")"
+	fi
+
 	step "survive a cut"
 	t_cut_idle() {
 		echo before >"$mnt/cut-idle" || return 1

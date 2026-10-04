@@ -112,6 +112,22 @@ if test -d "$mnt/"; then
 	}
 	record no-traces-in-volume t_no_traces
 
+	step "the Explorer shell"
+	# The copy engine of the Explorer, driven through its COM interface: it
+	# carries alternate streams along and probes the server in ways no
+	# command line tool does.
+	t_explorer() {
+		local src="$work/explorer-src"
+		mkdir -p "$src/sub" && printf one >"$src/a.txt" && printf two >"$src/sub/b.txt" && head -c 3000000 /dev/urandom >"$src/blob" || return 1
+		SRC=$(cygpath -w "$src") DRIVE=$drive powershell -NoProfile -File "$(cygpath -w "$here/explorer.ps1")" || return 1
+		cmp "$src/blob" "$mnt/explorer-src/blob" && test "$(cat "$mnt/explorer-src/sub/b.txt")" = two || return 1
+		local found
+		found=$(find "$root" \( -iname 'Thumbs.db' -o -iname 'desktop.ini' -o -iname '*Zone.Identifier*' \) | head -n 5)
+		rm -rf "$mnt/explorer-src"
+		test -z "$found" || { echo "left behind: $found"; return 1; }
+	}
+	record explorer-copy-browse-streams t_explorer
+
 	step "survive a cut"
 	t_cut_idle() {
 		echo before >"$mnt/cut-idle" || return 1
