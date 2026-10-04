@@ -154,6 +154,16 @@ if mountpoint -q "$mnt"; then
 	record "$cf" unmount t_umount
 fi
 
+# A client told to speak SMB 3.0 and nothing else, as older callers did.
+t_vers30() {
+	$sudo mount -t cifs "//127.0.0.1/$share" "$mnt" -o "${opts/vers=2.1/vers=3.0}" || return 1
+	local ok=1
+	echo "over 3.0" >"$mnt/v30" && test "$(cat "$mnt/v30")" = "over 3.0" && rm "$mnt/v30" && ok=0
+	$sudo umount "$mnt"
+	return $ok
+}
+record "$cf" mount-pinned-to-smb-3.0 t_vers30
+
 if command -v docker >/dev/null 2>&1 && test "${SKIP_DOCKER:-}" = ""; then
 	step "docker volume backed by cifs"
 	dv=$results/docker-volume.txt

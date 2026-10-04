@@ -46,7 +46,8 @@ quick test client.
 |---|---|
 | `smbserver.go` | `Config`, `Serve`, limits, accept loop |
 | `conn.go` | framing, compound requests, credits, signing, dispatch |
-| `negotiate.go` | dialects, SMB1 to SMB2 switch |
+| `negotiate.go` | dialects (2.1 preferred, 3.0 only for clients pinned to it), SMB1 to SMB2 switch |
+| `crypto.go` | AES-CMAC signing of SMB 3.0 |
 | `session.go` | session setup, tree connect |
 | `spnego.go`, `ntlm.go` | SPNEGO wrapping, NTLMv2 |
 | `open.go` | CREATE, CLOSE, handle table, delete on close |

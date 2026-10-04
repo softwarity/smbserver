@@ -56,6 +56,8 @@ type testClient struct {
 	sessionID uint64
 	treeID    uint32
 	key       []byte
+	// cmac makes the client sign as SMB 3.0 does.
+	cmac bool
 	// breaks counts the oplock break notifications received.
 	breaks int
 }
@@ -87,9 +89,17 @@ func (c *testClient) request(cmd uint16, body []byte) []byte {
 	h.put(msg)
 	msg = append(msg, body...)
 	if c.key != nil {
-		sign(c.key, msg)
+		signWith(c.mac, msg)
 	}
 	return msg
+}
+
+func (c *testClient) mac(msg []byte) []byte {
+	if c.cmac {
+		m := aesCMAC(c.key, msg)
+		return m[:]
+	}
+	return mac(c.key, msg)
 }
 
 func (c *testClient) send(msg []byte) {
@@ -128,7 +138,7 @@ func (c *testClient) do(cmd uint16, body []byte) (ntStatus, []byte) {
 	if !ok || h.command != cmd || h.flags&flagResponse == 0 {
 		c.t.Fatalf("command %d: unexpected response %x", cmd, resp)
 	}
-	if h.flags&flagSigned != 0 && c.key != nil && !verify(c.key, bytes.Clone(resp)) {
+	if h.flags&flagSigned != 0 && c.key != nil && !verifyWith(c.mac, bytes.Clone(resp)) {
 		c.t.Fatalf("command %d: bad response signature", cmd)
 	}
 	if c.key != nil && h.flags&flagSigned == 0 && h.status == statusSuccess {
@@ -200,10 +210,28 @@ func (c *testClient) login(user, password string) ntStatus {
 	proof := hmacMD5(owf, nonce, temp)
 	auth := authenticateMessage(user, "WORKGROUP", append(proof, temp...), nil)
 
-	st, _ = c.do(cmdSessionSetup, sessionSetupBody(negTokenResp(negAcceptIncomplete, false, auth, nil)))
+	// The final response is signed with the session key, which the client
+	// must hold before it can check it.
+	c.key = hmacMD5(owf, proof)
+	if c.cmac {
+		c.key = kdf(c.key, []byte("SMB2AESCMAC\x00"), []byte("SmbSign\x00"))
+	}
+	final := c.request(cmdSessionSetup, sessionSetupBody(negTokenResp(negAcceptIncomplete, false, auth, nil)))
+	clear(final[48:64])
+	le.PutUint32(final[16:], le.Uint32(final[16:])&^flagSigned)
+	c.send(final)
+	resp, err := c.recv()
+	if err != nil {
+		c.t.Fatalf("session setup: %v", err)
+	}
+	h, _ = parseHeader(resp)
+	st = h.status
 	if st == statusSuccess {
-		c.key = hmacMD5(owf, proof)
+		if h.flags&flagSigned == 0 || !verifyWith(c.mac, resp) {
+			c.t.Fatalf("the final session setup response is not properly signed")
+		}
 	} else {
+		c.key = nil
 		c.sessionID = 0
 	}
 	return st
@@ -411,10 +439,80 @@ func TestNegotiate(t *testing.T) {
 		t.Errorf("SMB 2.0.2 only client: %#x", uint32(st))
 	}
 
-	// A client that only knows SMB 3 has nothing in common.
+	// A client that only knows SMB 3.1.1 has nothing in common.
 	c = dial(t, addr)
-	if st, _ := c.negotiate(dialect300, dialect311); st != statusNotSupported {
-		t.Errorf("SMB 3 only client: %#x", uint32(st))
+	if st, _ := c.negotiate(dialect302, dialect311); st != statusNotSupported {
+		t.Errorf("SMB 3.1.1 only client: %#x", uint32(st))
+	}
+}
+
+// A client pinned to SMB 3.0 is served, with the signing of that dialect
+// and the negotiate validation it insists on.
+func TestSMB30(t *testing.T) {
+	root := t.TempDir()
+	addr := startServer(t, Config{Root: root})
+	c := dial(t, addr)
+	c.cmac = true
+	st, resp := c.negotiate(dialect300, dialect311)
+	if st != statusSuccess || le.Uint16(resp[headerSize+4:]) != dialect300 {
+		t.Fatalf("negotiate: %#x %x", uint32(st), resp[headerSize:headerSize+8])
+	}
+	if caps := le.Uint32(resp[headerSize+24:]); caps != capLargeMTU {
+		t.Errorf("capabilities %#x: nothing of SMB 3 beyond the dialect is offered", caps)
+	}
+	if st := c.login(testUser, testPassword); st != statusSuccess {
+		t.Fatalf("login: %#x", uint32(st))
+	}
+	if st := c.treeConnect(testShare); st != statusSuccess {
+		t.Fatalf("tree connect: %#x", uint32(st))
+	}
+
+	validate := func(dialects ...uint16) (ntStatus, []byte, error) {
+		in := make([]byte, 24)
+		le.PutUint16(in[20:], secModeSigningEnabled)
+		le.PutUint16(in[22:], uint16(len(dialects)))
+		for _, d := range dialects {
+			in = le.AppendUint16(in, d)
+		}
+		body := make([]byte, 56)
+		le.PutUint16(body, 57)
+		le.PutUint32(body[4:], fsctlValidateNegotiateInfo)
+		copy(body[8:], bytes.Repeat([]byte{0xFF}, 16))
+		le.PutUint32(body[24:], headerSize+56)
+		le.PutUint32(body[28:], uint32(len(in)))
+		le.PutUint32(body[44:], 24)
+		le.PutUint32(body[48:], 1)
+		c.send(c.request(cmdIoctl, append(body, in...)))
+		resp, err := c.recv()
+		if err != nil {
+			return 0, nil, err
+		}
+		h, _ := parseHeader(resp)
+		return h.status, resp, nil
+	}
+	st, resp, err := validate(dialect300, dialect311)
+	if err != nil || st != statusSuccess {
+		t.Fatalf("validate negotiate: %#x %v", uint32(st), err)
+	}
+	if out := resp[headerSize+48:]; le.Uint16(out[22:]) != dialect300 || le.Uint16(out[20:])&secModeSigningRequired == 0 {
+		t.Errorf("validate negotiate answer: %x", out)
+	}
+
+	id, st := c.create("f", accessRW, dispCreate, 0)
+	if st != statusSuccess || c.write(id, 0, []byte("over SMB 3.0")) != statusSuccess {
+		t.Fatalf("create and write: %#x", uint32(st))
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "f")); string(got) != "over SMB 3.0" {
+		t.Errorf("on disk: %q", got)
+	}
+
+	// A dialect list that differs from the negotiated one is the mark of
+	// a downgrade: the connection is closed.
+	if st, _, _ := validate(dialect210, dialect300, dialect311); st != statusAccessDenied {
+		t.Errorf("tampered validation: %#x", uint32(st))
+	}
+	if _, err := c.recv(); err == nil {
+		t.Error("the connection survived a failed validation")
 	}
 }
 

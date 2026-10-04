@@ -2,6 +2,7 @@ package smbserver
 
 import (
 	"bytes"
+	"crypto/aes"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -125,6 +126,58 @@ func TestSignature(t *testing.T) {
 	if verify(key, msg) {
 		t.Fatal("a modified message verifies")
 	}
+}
+
+// RFC 4493, section 4.
+func TestAESCMAC(t *testing.T) {
+	key := unhex(t, "2b7e151628aed2a6abf7158809cf4f3c")
+	msg := unhex(t, "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710")
+	for n, want := range map[int]string{
+		0:  "bb1d6929e95937287fa37d129b756746",
+		16: "070a16b46b4d4144f79bdd9dd04a287c",
+		40: "dfa66747de9ae63030ca32611497c827",
+		64: "51f0bebf7e3b9d92fc49741779363cfe",
+	} {
+		if got := aesCMAC(key, msg[:n]); hex.EncodeToString(got[:]) != want {
+			t.Errorf("CMAC of %d bytes = %x, want %s", n, got, want)
+		}
+	}
+	// Longer than the internal chunk, against the definition applied one
+	// block at a time.
+	for _, n := range []int{4096, 4097, 8192 + 16, 12800} {
+		long := bytes.Repeat(msg, 200)[:n]
+		if got, want := aesCMAC(key, long), cmacReference(key, long); got != want {
+			t.Errorf("CMAC of %d bytes = %x, want %x", n, got, want)
+		}
+	}
+}
+
+func cmacReference(key, msg []byte) (x [16]byte) {
+	blk, _ := aes.NewCipher(key)
+	var k1 [16]byte
+	blk.Encrypt(k1[:], k1[:])
+	cmacDouble(&k1)
+	k2 := k1
+	cmacDouble(&k2)
+	for len(msg) > 16 {
+		for i := range x {
+			x[i] ^= msg[i]
+		}
+		blk.Encrypt(x[:], x[:])
+		msg = msg[16:]
+	}
+	var last [16]byte
+	copy(last[:], msg)
+	pad := k1
+	if len(msg) < 16 {
+		last[len(msg)] = 0x80
+		pad = k2
+	}
+	for i := range x {
+		x[i] ^= last[i] ^ pad[i]
+	}
+	blk.Encrypt(x[:], x[:])
+	return x
 }
 
 func TestHeaderRoundTrip(t *testing.T) {

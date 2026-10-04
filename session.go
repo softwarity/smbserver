@@ -15,8 +15,10 @@ type session struct {
 	auth          *authState
 	authenticated bool
 
-	// signingKey is the NTLM session key, which SMB 2 signs with as is.
+	// signingKey is the NTLM session key on SMB 2, and a key derived from
+	// it on SMB 3.0, which also changes the algorithm.
 	signingKey []byte
+	cmac       bool
 
 	mu       sync.Mutex
 	closed   bool
@@ -93,6 +95,10 @@ func (c *conn) sessionSetup(r *request) (ntStatus, []byte) {
 		sess.auth = nil
 		if !sess.authenticated {
 			sess.signingKey = key
+			if c.dialect == dialect300 {
+				sess.signingKey = kdf(key, []byte("SMB2AESCMAC\x00"), []byte("SmbSign\x00"))
+				sess.cmac = true
+			}
 			sess.authenticated = true
 			c.authenticated = true
 			c.nc.SetReadDeadline(time.Time{})
@@ -170,6 +176,14 @@ func (s *session) step(token []byte) (ntStatus, []byte) {
 		return statusMoreProcessingRequired, negTokenResp(negAcceptIncomplete, true, nil, nil)
 	}
 	return statusLogonFailure, nil
+}
+
+func (s *session) mac(msg []byte) []byte {
+	if s.cmac {
+		m := aesCMAC(s.signingKey, msg)
+		return m[:]
+	}
+	return mac(s.signingKey, msg)
 }
 
 func (s *session) tree(id uint32) *tree {

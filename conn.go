@@ -26,6 +26,10 @@ type conn struct {
 	smb1Seen   bool
 	dialect    uint16
 	maxIO      uint32
+	// What the client said in NEGOTIATE, for its later validation.
+	clientGUID    [16]byte
+	clientCaps    uint32
+	clientSecMode uint16
 
 	// credits is the number of credits the client currently holds.
 	credits       int
@@ -164,7 +168,7 @@ func (c *conn) handleMessage(msg []byte) error {
 				le.PutUint32(out[20:], uint32(len(out)))
 			}
 			if r.sign && r.sess != nil && r.sess.signingKey != nil {
-				sign(r.sess.signingKey, out)
+				signWith(r.sess.mac, out)
 			}
 			if payload == nil {
 				payload = out
@@ -279,7 +283,7 @@ func (c *conn) route(r *request) (ntStatus, []byte) {
 	}
 	// Signing is required: an unsigned or badly signed request is refused
 	// whatever the client negotiated.
-	if h.flags&flagSigned == 0 || !verify(sess.signingKey, r.msg) {
+	if h.flags&flagSigned == 0 || !verifyWith(sess.mac, r.msg) {
 		return statusAccessDenied, nil
 	}
 	r.sess = sess
@@ -377,20 +381,28 @@ func mac(key, msg []byte) []byte {
 	return h.Sum(nil)[:16]
 }
 
-// sign sets the signed flag of a response and fills its signature.
-func sign(key, msg []byte) {
+// signWith sets the signed flag of a response and fills its signature.
+func signWith(mac func([]byte) []byte, msg []byte) {
 	le.PutUint32(msg[16:], le.Uint32(msg[16:])|flagSigned)
 	clear(msg[48:64])
-	copy(msg[48:64], mac(key, msg))
+	copy(msg[48:64], mac(msg))
 }
 
-// verify checks the signature of a request. It zeroes the signature field
-// of msg, which nothing reads afterwards.
-func verify(key, msg []byte) bool {
+// verifyWith checks the signature of a request. It zeroes the signature
+// field of msg, which nothing reads afterwards.
+func verifyWith(mac func([]byte) []byte, msg []byte) bool {
 	var got [16]byte
 	copy(got[:], msg[48:64])
 	clear(msg[48:64])
-	return hmac.Equal(got[:], mac(key, msg))
+	return hmac.Equal(got[:], mac(msg))
+}
+
+func sign(key, msg []byte) {
+	signWith(func(b []byte) []byte { return mac(key, b) }, msg)
+}
+
+func verify(key, msg []byte) bool {
+	return verifyWith(func(b []byte) []byte { return mac(key, b) }, msg)
 }
 
 func (c *conn) session(id uint64) *session {

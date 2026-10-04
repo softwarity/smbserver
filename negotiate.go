@@ -14,12 +14,14 @@ const (
 	capLargeMTU uint32 = 0x00000004
 )
 
-// dialects lists what the server speaks, preferred first. SMB 2.1 is the
-// ceiling on purpose: every native client accepts it, and stopping there
-// leaves out the whole of SMB 3 (encryption, negotiate contexts,
-// pre-authentication integrity) that a single share behind a tunnel has no
-// use for.
-var dialects = []uint16{dialect210, dialect202}
+// dialects lists what the server speaks, preferred first. SMB 2.1 is what
+// every native client is served: it leaves out the whole of SMB 3
+// (encryption, negotiate contexts, pre-authentication integrity) that a
+// single share behind a tunnel has no use for. SMB 3.0 comes last, so it is
+// only chosen for a client that offers nothing lower, which is one mounted
+// with an explicit "vers=3.0"; it is then served without encryption nor
+// multichannel, the difference being the signing algorithm.
+var dialects = []uint16{dialect210, dialect202, dialect300}
 
 func pickDialect(offered []uint16) uint16 {
 	for _, d := range dialects {
@@ -93,6 +95,10 @@ func (c *conn) negotiate(r *request) (ntStatus, []byte) {
 	if dialect == 0 {
 		return statusNotSupported, nil
 	}
+	// Kept for the validation an SMB 3.0 client asks for once signed.
+	c.clientSecMode = le.Uint16(p[4:])
+	c.clientCaps = le.Uint32(p[8:])
+	copy(c.clientGUID[:], p[12:28])
 	c.setDialect(dialect)
 	return statusSuccess, c.negotiateResponse(dialect)
 }

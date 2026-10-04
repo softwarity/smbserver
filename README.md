@@ -97,7 +97,7 @@ mount -t cifs //host/vol /mnt -o username=dev,password=secret,port=1445,vers=2.1
 
 | Option | Why |
 |---|---|
-| `vers=2.1` | the dialect of the server; without it the client first tries SMB 3 |
+| `vers=2.1` | the dialect of the server. Optional: left out, the client negotiates it; `vers=3.0` works too |
 | `hard` | a soft mount (the default) fails operations with `EAGAIN` while it reconnects; a hard one waits, and the cut goes unnoticed |
 | `uid=`, `gid=`, `noperm` | the files appear as the local user's and the client does not second-guess the server on permissions |
 
@@ -150,7 +150,7 @@ smbclient //host/vol -p 1445 -U dev%secret
   session is established a peer can negotiate, authenticate and echo, nothing
   else.
 - **Signing required.** Every request of a session must carry a valid
-  HMAC-SHA256 signature; every response is signed.
+  signature (HMAC-SHA256, or AES-CMAC on SMB 3.0); every response is signed.
 - **Source filter.** `Allow` is applied when the connection is accepted,
   before a single byte is read.
 - **Bounds.** Message size (128 KiB before login, 8 MiB after), credits (8192),
@@ -161,7 +161,7 @@ smbclient //host/vol -p 1445 -U dev%secret
   decoders are fuzzed in CI; a connection that still manages to panic is
   closed and the process carries on.
 
-There is no encryption: the protocol is capped at SMB 2.1 (see below). Run it
+There is no encryption (see the scope below). Run it
 over a transport that provides confidentiality, a tunnel for instance.
 
 ## Scope
@@ -174,6 +174,9 @@ What it does:
 
 - SMB 2.0.2 and 2.1. An SMB1 multi-protocol negotiate is steered to SMB2; a
   client that only speaks SMB1 is disconnected.
+- SMB 3.0 for a client that offers nothing lower, which is one mounted with an
+  explicit `vers=3.0`: same server, signed with AES-CMAC, with the negotiate
+  validation that dialect requires. A client that offers 2.1 gets 2.1.
 - `NEGOTIATE`, `SESSION_SETUP`, `LOGOFF`, `TREE_CONNECT`, `TREE_DISCONNECT`,
   `CREATE`, `CLOSE`, `FLUSH`, `READ`, `WRITE`, `LOCK`, `QUERY_DIRECTORY`,
   `QUERY_INFO`, `SET_INFO`, `ECHO`, `CANCEL`, `IOCTL`.
@@ -194,8 +197,7 @@ What it leaves out, and how clients cope:
 
 | Feature | Answer | Clients |
 |---|---|---|
-| SMB 3.x, encryption, negotiate contexts | SMB 2.1 is negotiated | All negotiate down |
-| `FSCTL_VALIDATE_NEGOTIATE_INFO` | not supported | Only required on SMB 3.0 |
+| SMB 3.0.2 and 3.1.1, encryption, negotiate contexts | SMB 2.1 is negotiated | All negotiate down |
 | Exclusive and batch oplocks, leases | level II at most | Readers cache, writers do not |
 | Durable and persistent handles | ignored | After a cut, clients reopen by path |
 | Multichannel | not offered | |
