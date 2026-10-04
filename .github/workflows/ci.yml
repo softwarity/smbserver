@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only by default; the one job that writes (the compatibility matrix of
+# the README) asks for it itself.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        shell: bash
+        env:
+          # The race detector needs cgo and a C toolchain, which the Windows
+          # runner does not guarantee; none of the concurrency is specific to
+          # an operating system.
+          RACE: ${{ matrix.os != 'windows-latest' && '-race' || '' }}
+        run: go test $RACE ./...
+
+  fuzz:
+    name: Fuzz the decoders
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Fuzz each target for a bounded time
+        run: |
+          for target in $(grep -oh '^func Fuzz[A-Za-z0-9]*' *_test.go | sed 's/func //'); do
+            echo "::group::$target"
+            go test -run '^$' -fuzz "^$target\$" -fuzztime 45s .
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: fuzz-crashers
+          path: testdata/fuzz
+
+  linux:
+    name: Linux clients (smbclient, cifs, docker volume)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install the clients
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q smbclient cifs-utils
+          # The cifs module lives in the extra modules package on the
+          # runner's cloud kernel.
+          sudo modprobe cifs || { sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" && sudo modprobe cifs; }
+      - name: Build
+        run: go build -o bin/ ./cmd/smbserver ./test/tcpcut
+      - name: Run the clients against a server under an unprivileged uid
+        run: bash test/linux.sh bin results
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: results-linux
+          path: results/*.txt
+
+  macos:
+    name: macOS client (mount_smbfs)
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build -o bin/ ./cmd/smbserver ./test/tcpcut
+      - name: Mount and exercise the share
+        run: bash test/macos.sh bin results
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: results-macos
+          path: results/*.txt
+
+  matrix:
+    name: Compatibility matrix
+    needs: [linux, macos]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: results-*
+          path: results
+          merge-multiple: true
+      - name: Build the table
+        run: |
+          go run ./test/matrix results | tee -a "$GITHUB_STEP_SUMMARY"
+          go run ./test/matrix results README.md
+      # The README states what this run observed. Only on main, and without
+      # triggering another run: the commit changes one table.
+      - name: Commit the table when it changed
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          if git diff --quiet README.md; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git commit -q -m 'Update the compatibility matrix [skip ci]' README.md
+          # Main may have moved while the tests ran; the table is then the
+          # business of the run that follows.
+          git push || echo "main moved on, leaving the table to the next run"
