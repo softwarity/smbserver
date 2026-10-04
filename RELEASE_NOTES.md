@@ -2,6 +2,10 @@
 
 ## NEXT RELEASE
 
+---
+
+## 0.1.0
+
 ### First release
 
 An SMB 2 file server as a Go library: one directory, one share, one user, on a
