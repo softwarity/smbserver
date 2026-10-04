@@ -22,7 +22,25 @@ normally ships Samba: tens of megabytes in the image, configuration files, a
 Unix account to fake, and capabilities when the process is root. This package
 replaces all of that with a function call in the binary.
 
-It is meant to run next to a workload, as that workload's user:
+It was designed for two Softwarity projects, and their needs are what shaped
+it:
+
+- [plug](https://github.com/softwarity/plug) runs a local process as if it
+  were inside the cluster. When that process needs the files of a workload,
+  plug starts a helper next to the workload that serves its volume, and the
+  developer's machine mounts it through plug's tunnel with the SMB client it
+  already has.
+- [meerkat](https://github.com/softwarity/meerkat-ce), a gateway that embeds
+  plug's agent, serves volumes the same way from its own image.
+
+Hence the choices made here: one share and one user per server, started and
+stopped with the helper; nothing to install or configure on either side; a
+mount that comes back on its own when the tunnel reconnects; no encryption,
+since the tunnel provides it; and nothing left in a volume that belongs to
+the cluster. Nothing in the package depends on either project, and it serves
+any program with the same need.
+
+It runs next to a workload, as that workload's user:
 
 - **Any uid, no privilege.** No root, no capability, no `/etc/passwd` entry, no
   configuration or state file. The files it creates belong to the uid of the
