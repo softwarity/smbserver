@@ -2,11 +2,6 @@
 # Integration test on Windows, run from Git Bash as an administrator: the
 # kernel redirector ("net use") against a local server.
 #
-# The redirector only ever connects to port 445, which the machine's own SMB
-# server holds. The test frees it by stopping that service and its drivers,
-# which a CI runner can afford; the relay then listens on 445 in front of the
-# server, so the cut test works as on the other systems.
-#
 # usage: windows.sh <bin-dir> [results-dir]
 set -u
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
@@ -54,35 +49,39 @@ cleanup() {
 }
 trap cleanup EXIT
 
-step "free port 445"
-# The server service first, then the drivers under it, in dependency order.
-stopped() { sc query "$1" | grep -q 'STATE *: 1 '; }
-net stop LanmanServer /y
-# One driver at a time, each fully stopped before the one under it is asked
-# to: stopping srvnet while srv2 is still on its way down leaves it pending.
-for svc in srv2 srvnet; do
-	for _ in $(seq 1 60); do
-		stopped $svc && break
-		sc stop $svc >/dev/null 2>&1
+# The redirector connects to port 445 unless told otherwise, which only
+# Windows 11 24H2 and Windows Server 2025 can be ("net use /tcpport"). Where
+# that exists the test uses a high port and touches nothing on the machine.
+# Elsewhere it frees 445 by stopping the machine's own SMB server, which a CI
+# runner can afford, though the driver under it does not always let go.
+relay=1446
+tcpport="/tcpport:$relay"
+if ! net use /? 2>&1 | grep -qi tcpport; then
+	step "free port 445"
+	relay=445
+	tcpport=
+	stopped() { sc query "$1" | grep -q 'STATE *: 1 '; }
+	net stop LanmanServer /y
+	for svc in srv2 srvnet; do
+		for _ in $(seq 1 60); do
+			stopped $svc && break
+			sc stop $svc >/dev/null 2>&1
+			sleep 2
+		done
+	done
+	for _ in $(seq 1 30); do
+		netstat -ano -p TCP | grep -q ':445 .*LISTENING' || break
 		sleep 2
 	done
-	sc query $svc | grep STATE
-done
-for _ in $(seq 1 30); do
-	netstat -ano -p TCP | grep -q ':445 .*LISTENING' || break
-	sleep 2
-done
-if netstat -ano -p TCP | grep ':445 .*LISTENING'; then
-	echo "port 445 is still held"
 fi
 
 mkdir -p "$root"
 SMBSERVER_TRACE="${SMBSERVER_TRACE:-}" "$bin/smbserver.exe" -root "$(cygpath -w "$root")" -addr 127.0.0.1:$port -share $share -user $user -password "$password" -v >"$work/server.log" 2>&1 &
 server_pid=$!
-"$bin/tcpcut.exe" -listen 127.0.0.1:445 -to 127.0.0.1:$port -control 127.0.0.1:$control >"$work/relay.log" 2>&1 &
+"$bin/tcpcut.exe" -listen 127.0.0.1:$relay -to 127.0.0.1:$port -control 127.0.0.1:$control >"$work/relay.log" 2>&1 &
 relay_pid=$!
 for _ in $(seq 1 50); do
-	(exec 3<>/dev/tcp/127.0.0.1/445) 2>/dev/null && break
+	(exec 3<>/dev/tcp/127.0.0.1/$relay) 2>/dev/null && break
 	sleep 0.2
 done
 cat "$work/relay.log"
@@ -91,8 +90,8 @@ step "net use"
 unc='\\127.0.0.1\'$share
 # Error 86 or 1326 is the server refusing the password; any other failure
 # would only say that the server was not reached.
-t_bad_password() { net use $drive: "$unc" wrong-password /user:$user /persistent:no 2>&1 | grep -Eq 'error (86|1326) '; }
-t_mount() { net use $drive: "$unc" "$password" /user:$user /persistent:no; }
+t_bad_password() { net use $drive: "$unc" wrong-password /user:$user /persistent:no $tcpport 2>&1 | grep -Eq 'error (86|1326) '; }
+t_mount() { net use $drive: "$unc" "$password" /user:$user /persistent:no $tcpport; }
 record bad-password-refused t_bad_password
 net use $drive: /delete /y >/dev/null 2>&1
 record mount t_mount
