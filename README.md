@@ -120,6 +120,18 @@ mount_smbfs -N //dev:secret@host:1445/vol /mnt
 `-N` forbids any prompt. Nothing has to be set in `nsmb.conf`: the client
 negotiates SMB 2.1 by itself, where multichannel does not exist.
 
+**Windows**
+
+```bat
+net use S: \\host\vol secret /user:dev /persistent:no
+```
+
+The Windows redirector only ever connects to port 445, so the server must be
+reachable there under the name or address the client uses: either the server
+listens on 445, or something in front of it forwards 445 to its port. The
+server checks neither the host name of the tree connect nor the target name of
+the NTLM exchange, so any name that resolves to it works.
+
 **smbclient**
 
 ```bash
@@ -207,8 +219,12 @@ mounted side.
 ## Compatibility
 
 The table below is written by CI from the result of the integration tests of
-the last run on `main`: each client mounts a server running under an
-unprivileged uid and goes through the same operations.
+the last run on `main`: each client mounts the share and goes through the
+same operations. On Linux the server runs under a uid that exists in no
+account file, without any capability. Each mount is made without a prompt
+and with nothing configured on the client beyond the mount command itself.
+On the Windows runner the machine's own SMB server is stopped to free port
+445, since the redirector knows no other.
 
 <!-- matrix:start -->
 | Operation | smbclient | Linux (cifs) | Docker volume (cifs) | macOS (mount_smbfs) | Windows (redirector) |

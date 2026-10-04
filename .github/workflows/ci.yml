@@ -87,9 +87,7 @@ jobs:
         if: always()
         with:
           name: results-linux
-          path: |
-            results/*.txt
-            results/bench.md
+          path: results/*
 
   macos:
     name: macOS client (mount_smbfs)
