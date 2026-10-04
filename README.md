@@ -243,6 +243,10 @@ the last run on `main`: each client mounts the share and goes through the
 same operations. On Linux the server runs under a uid that exists in no
 account file, without any capability. Each mount is made without a prompt
 and with nothing configured on the client beyond the mount command itself.
+Beyond the command line, the desktop applications are driven too, since they
+ask a server things no shell does: the Finder is scripted to open the share,
+copy a folder into it and rename a file, and the copy engine of the Windows
+Explorer is run through its COM interface, on a file carrying a zone stream.
 On the Windows runner the redirector is pointed at a high port with
 `net use /tcpport`, which Windows Server 2025 and Windows 11 24H2 have; the
 server it talks to is the Windows build of this package. A Windows client

@@ -2,6 +2,14 @@
 
 ## NEXT RELEASE
 
+### The Finder and the Explorer
+
+- **Copying with the Finder needs no confirmation.** The Finder sees the share
+  as a folder it can read and write, and copies into it without asking.
+- **Checked with the desktop applications.** Browsing, copying and renaming
+  through the Finder, and copying through the Windows Explorer with its
+  alternate streams, are part of what every build is tested against.
+
 ---
 
 ## 0.1.0
