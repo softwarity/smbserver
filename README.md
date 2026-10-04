@@ -211,40 +211,48 @@ the last run on `main`: each client mounts a server running under an
 unprivileged uid and goes through the same operations.
 
 <!-- matrix:start -->
-| Operation | macOS (mount_smbfs) | Windows (redirector) |
-|---|:-:|:-:|
-| bad-password-refused | ✅ | ✅ |
-| mount | ✅ | ✅ |
-| mkdir | ✅ | ✅ |
-| create | ✅ | ✅ |
-| write | ✅ | ✅ |
-| read | ✅ | ✅ |
-| append | ✅ | ✅ |
-| overwrite | ✅ | ✅ |
-| list | ✅ | ✅ |
-| list-many | ✅ | ✅ |
-| stat | ✅ | ✅ |
-| rename | ✅ | ✅ |
-| rename-over | ✅ | ✅ |
-| rename-dir | ✅ | ✅ |
-| move-across-dirs | ✅ | ✅ |
-| delete | ✅ | ✅ |
-| rmdir | ✅ | ✅ |
-| rmdir-nonempty-refused | ✅ | ✅ |
-| rm-recursive | ✅ | ✅ |
-| truncate | ✅ | ✅ |
-| dates | ✅ | ✅ |
-| statfs | ✅ | ✅ |
-| names | ✅ | ✅ |
-| big-file-hash | ✅ | ❌ |
-| concurrent-writes | ✅ | ✅ |
-| concurrent-files | ✅ | ✅ |
-| cleanup | ✅ | ✅ |
-| no-traces-in-volume | ✅ | ✅ |
-| reconnect-after-cut-idle | ✅ | ✅ |
-| reconnect-after-cut-during-copy | ✅ | ✅ |
-| reconnect-after-repeated-cuts | ✅ | ✅ |
-| unmount | ✅ | ✅ |
+| Operation | smbclient | Linux (cifs) | Docker volume (cifs) | macOS (mount_smbfs) | Windows (redirector) |
+|---|:-:|:-:|:-:|:-:|:-:|
+| login | ✅ |  |  |  |  |
+| bad-password-refused | ✅ |  |  | ✅ | ✅ |
+| bad-user-refused | ✅ |  |  |  |  |
+| put-get | ✅ |  |  |  |  |
+| mkdir-rmdir | ✅ |  |  |  |  |
+| rename-delete | ✅ |  |  |  |  |
+| files-owned-by-server-uid | ✅ |  |  |  |  |
+| no-escape | ✅ |  |  |  |  |
+| mount |  | ✅ |  | ✅ | ✅ |
+| mkdir |  | ✅ |  | ✅ | ✅ |
+| create |  | ✅ |  | ✅ | ✅ |
+| write |  | ✅ |  | ✅ | ✅ |
+| read |  | ✅ |  | ✅ | ✅ |
+| append |  | ✅ |  | ✅ | ✅ |
+| overwrite |  | ✅ |  | ✅ | ✅ |
+| list |  | ✅ |  | ✅ | ✅ |
+| list-many |  | ✅ |  | ✅ | ✅ |
+| stat |  | ✅ |  | ✅ | ✅ |
+| rename |  | ✅ |  | ✅ | ✅ |
+| rename-over |  | ✅ |  | ✅ | ✅ |
+| rename-dir |  | ✅ |  | ✅ | ✅ |
+| move-across-dirs |  | ✅ |  | ✅ | ✅ |
+| delete |  | ✅ |  | ✅ | ✅ |
+| rmdir |  | ✅ |  | ✅ | ✅ |
+| rmdir-nonempty-refused |  | ✅ |  | ✅ | ✅ |
+| rm-recursive |  | ✅ |  | ✅ | ✅ |
+| truncate |  | ✅ |  | ✅ | ✅ |
+| dates |  | ✅ |  | ✅ | ✅ |
+| statfs |  | ✅ |  | ✅ | ✅ |
+| names |  | ✅ |  | ✅ | ✅ |
+| big-file-hash |  | ✅ |  | ✅ | ✅ |
+| concurrent-writes |  | ✅ |  | ✅ | ✅ |
+| concurrent-files |  | ✅ |  | ✅ | ✅ |
+| cleanup |  | ✅ |  | ✅ | ✅ |
+| reconnect-after-cut-idle |  | ✅ |  | ✅ | ✅ |
+| reconnect-after-cut-during-copy |  | ✅ |  | ✅ | ✅ |
+| reconnect-after-repeated-cuts |  | ✅ |  | ✅ | ✅ |
+| unmount |  | ✅ |  | ✅ | ✅ |
+| volume-read-write |  |  | ✅ |  |  |
+| no-traces-in-volume |  |  |  | ✅ | ✅ |
 <!-- matrix:end -->
 
 ### Speed
