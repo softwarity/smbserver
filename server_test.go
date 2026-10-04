@@ -1323,3 +1323,32 @@ func TestStreams(t *testing.T) {
 		t.Errorf("create .DS_Store in a directory: %#x", uint32(st))
 	}
 }
+
+// The maximal access reply describes the rights of the user, whatever the
+// handle was opened for.
+func TestMaximalAccess(t *testing.T) {
+	for _, readOnly := range []bool{false, true} {
+		addr := startServer(t, Config{ReadOnly: readOnly})
+		c := connect(t, addr)
+		// A handle for attributes only, as the Finder opens a folder,
+		// with an empty MxAc context appended.
+		body := createBody("", 0x00100080, dispOpen, optDirectory)
+		body = pad8(append(make([]byte, headerSize), body...))[headerSize:]
+		le.PutUint32(body[48:], uint32(headerSize+len(body)))
+		ctx := createContext("MxAc", nil)
+		le.PutUint32(body[52:], uint32(len(ctx)))
+		st, resp := c.do(cmdCreate, append(body, ctx...))
+		if st != statusSuccess {
+			t.Fatalf("create: %#x", uint32(st))
+		}
+		p := resp[headerSize:]
+		reply, ok := parseCreateContexts(resp, le.Uint32(p[80:]), le.Uint32(p[84:]))
+		want := uint32(accessAll)
+		if readOnly {
+			want = accessReadOnly
+		}
+		if d := reply["MxAc"]; !ok || len(d) != 8 || le.Uint32(d) != 0 || le.Uint32(d[4:]) != want {
+			t.Errorf("read-only %v: maximal access reply %x, want %#x", readOnly, d, want)
+		}
+	}
+}

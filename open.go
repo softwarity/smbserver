@@ -491,8 +491,16 @@ func (c *conn) create(r *request) (ntStatus, []byte) {
 
 	var reply [][]byte
 	if _, ok := contexts["MxAc"]; ok {
+		// What the user may do with the file, not what this handle was
+		// opened for: the Finder decides from it whether a folder can be
+		// read, and takes one answered with the access of a handle
+		// opened for attributes as a write-only drop box.
+		maximal := accessAll
+		if c.srv.cfg.ReadOnly {
+			maximal = accessReadOnly
+		}
 		d := make([]byte, 8)
-		le.PutUint32(d[4:], o.access)
+		le.PutUint32(d[4:], maximal)
 		reply = append(reply, createContext("MxAc", d))
 	}
 	if _, ok := contexts["QFid"]; ok {
