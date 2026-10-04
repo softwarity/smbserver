@@ -108,21 +108,23 @@ t_names() {
 	printf up >"$work/UPPER" && test "$(cat "$work/UPPER")" = up
 }
 t_big() {
-	# Pseudo-random content, cheap to produce: a seed block repeated with
-	# a counter mixed in would compress; openssl gives real entropy fast.
-	local src="$errors.big" want got
+	# Content that does not compress, produced quickly: a cipher stream
+	# where openssl is at hand, the kernel's generator otherwise.
+	local src="$errors.big" bytes=$((big_mb * 1024 * 1024)) want got
 	if command -v openssl >/dev/null 2>&1; then
-		openssl enc -aes-128-ctr -pass pass:fsops -nosalt </dev/zero 2>/dev/null | head -c $((big_mb * 1024 * 1024)) >"$src"
-	else
-		head -c $((big_mb * 1024 * 1024)) /dev/urandom >"$src"
+		openssl enc -aes-128-ctr -pass pass:fsops -nosalt </dev/zero 2>/dev/null | head -c $bytes >"$src"
 	fi
+	test "$(size_of "$src" 2>/dev/null)" = $bytes || head -c $bytes /dev/urandom >"$src"
 	want=$(sha <"$src")
 	cp "$src" "$work/big" || { rm -f "$src"; return 1; }
 	rm -f "$src"
-	test "$(size_of "$work/big")" = $((big_mb * 1024 * 1024)) || return 1
+	if test "$(size_of "$work/big")" != $bytes; then
+		echo "size $(size_of "$work/big"), want $bytes" >&2
+		return 1
+	fi
 	got=$(sha <"$work/big")
 	rm -f "$work/big"
-	test "$want" = "$got"
+	test "$want" = "$got" || { echo "hash $got, want $want" >&2; return 1; }
 }
 t_concurrent() {
 	# Two processes write interleaved 1 MiB blocks of the same file, then

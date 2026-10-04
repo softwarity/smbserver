@@ -60,7 +60,9 @@ cat >"$work/smb.conf" <<EOF
 	valid users = $user
 EOF
 printf '%s\n%s\n' "$password" "$password" | $sudo smbpasswd -c "$work/smb.conf" -a -s $user >/dev/null
-$sudo smbd --foreground --no-process-group -s "$work/smb.conf" >"$work/samba.log" 2>&1 &
+# Not --no-process-group: smbd then signals its whole process group when it
+# stops, which takes the caller of this script down with it.
+$sudo setsid smbd --foreground -s "$work/smb.conf" >"$work/samba.log" 2>&1 &
 samba_pid=$!
 
 for port in 1445 1455; do
