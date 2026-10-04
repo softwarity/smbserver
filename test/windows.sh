@@ -56,17 +56,23 @@ trap cleanup EXIT
 
 step "free port 445"
 # The server service first, then the drivers under it, in dependency order.
+stopped() { sc query "$1" | grep -q 'STATE *: 1 '; }
 net stop LanmanServer /y
-for svc in srv2 srvnet; do sc stop $svc >/dev/null; done
-# The drivers take a moment to let go of the port.
-for _ in $(seq 1 60); do
+# One driver at a time, each fully stopped before the one under it is asked
+# to: stopping srvnet while srv2 is still on its way down leaves it pending.
+for svc in srv2 srvnet; do
+	for _ in $(seq 1 60); do
+		stopped $svc && break
+		sc stop $svc >/dev/null 2>&1
+		sleep 2
+	done
+	sc query $svc | grep STATE
+done
+for _ in $(seq 1 30); do
 	netstat -ano -p TCP | grep -q ':445 .*LISTENING' || break
-	sc stop srvnet >/dev/null 2>&1
 	sleep 2
 done
 if netstat -ano -p TCP | grep ':445 .*LISTENING'; then
-	sc query srvnet
-	sc enumdepend srvnet
 	echo "port 445 is still held"
 fi
 
@@ -83,7 +89,9 @@ cat "$work/relay.log"
 
 step "net use"
 unc='\\127.0.0.1\'$share
-t_bad_password() { ! net use $drive: "$unc" wrong-password /user:$user /persistent:no >/dev/null 2>&1; }
+# Error 86 or 1326 is the server refusing the password; any other failure
+# would only say that the server was not reached.
+t_bad_password() { net use $drive: "$unc" wrong-password /user:$user /persistent:no 2>&1 | grep -Eq 'error (86|1326) '; }
 t_mount() { net use $drive: "$unc" "$password" /user:$user /persistent:no; }
 record bad-password-refused t_bad_password
 net use $drive: /delete /y >/dev/null 2>&1
