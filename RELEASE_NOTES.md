@@ -2,6 +2,10 @@
 
 ## NEXT RELEASE
 
+---
+
+## 0.1.1
+
 ### The Finder and the Explorer
 
 - **Copying with the Finder needs no confirmation.** The Finder sees the share
