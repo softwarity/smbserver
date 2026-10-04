@@ -286,11 +286,11 @@ three, client caches dropped before each.
 <!-- bench:start -->
 | Operation | smbserver | Samba 4.19.5-Ubuntu | Ratio |
 |---|--:|--:|--:|
-| Create 1000 files of 4 KiB | 2.22 s | 2.78 s | 0.8 |
-| Read 1000 files of 4 KiB | 0.54 s | 0.43 s | 1.3 |
-| List a directory of 5000 files | 0.87 s | 1.49 s | 0.6 |
-| Write 100 MiB | 0.16 s | 0.17 s | 0.9 |
-| Read 100 MiB | 0.18 s | 0.18 s | 1.0 |
+| Create 1000 files of 4 KiB | 4.06 s | 3.09 s | 1.3 |
+| Read 1000 files of 4 KiB | 0.62 s | 1.33 s | 0.5 |
+| List a directory of 5000 files | 0.59 s | 1.16 s | 0.5 |
+| Write 100 MiB | 0.49 s | 0.48 s | 1.0 |
+| Read 100 MiB | 0.21 s | 0.20 s | 1.0 |
 <!-- bench:end -->
 
 ## Tests
