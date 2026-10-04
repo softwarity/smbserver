@@ -73,7 +73,7 @@ jobs:
       - name: Install the clients
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y -q smbclient cifs-utils
+          sudo apt-get install -y -q smbclient cifs-utils samba
           # The cifs module lives in the extra modules package on the
           # runner's cloud kernel.
           sudo modprobe cifs || { sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" && sudo modprobe cifs; }
@@ -81,11 +81,15 @@ jobs:
         run: go build -o bin/ ./cmd/smbserver ./test/tcpcut
       - name: Run the clients against a server under an unprivileged uid
         run: bash test/linux.sh bin results
+      - name: Time everyday operations against Samba
+        run: bash test/bench.sh bin results
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: results-linux
-          path: results/*.txt
+          path: |
+            results/*.txt
+            results/bench.md
 
   macos:
     name: macOS client (mount_smbfs)

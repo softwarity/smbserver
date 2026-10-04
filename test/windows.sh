@@ -57,9 +57,18 @@ trap cleanup EXIT
 step "free port 445"
 # The server service first, then the drivers under it, in dependency order.
 net stop LanmanServer /y
-for svc in srv2 srvnet; do sc stop $svc; done
-sleep 3
-netstat -ano | grep ':445 ' || echo "port 445 is free"
+for svc in srv2 srvnet; do sc stop $svc >/dev/null; done
+# The drivers take a moment to let go of the port.
+for _ in $(seq 1 60); do
+	netstat -ano -p TCP | grep -q ':445 .*LISTENING' || break
+	sc stop srvnet >/dev/null 2>&1
+	sleep 2
+done
+if netstat -ano -p TCP | grep ':445 .*LISTENING'; then
+	sc query srvnet
+	sc enumdepend srvnet
+	echo "port 445 is still held"
+fi
 
 mkdir -p "$root"
 SMBSERVER_TRACE="${SMBSERVER_TRACE:-}" "$bin/smbserver.exe" -root "$(cygpath -w "$root")" -addr 127.0.0.1:$port -share $share -user $user -password "$password" -v >"$work/server.log" 2>&1 &
@@ -106,8 +115,9 @@ if test -d "$mnt/"; then
 	t_cut_busy() {
 		head -c 268435456 /dev/urandom >"$work/busy" || return 1
 		(sleep 1; cut) &
+		local cutter=$!
 		cp "$work/busy" "$mnt/busy"
-		wait
+		wait $cutter
 		# The operation in flight when the connection drops may fail,
 		# which is for the client to decide. What is required is that
 		# the mount is usable again at once: the copy is redone and

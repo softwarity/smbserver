@@ -18,6 +18,9 @@ import (
 type conn struct {
 	srv *server
 	nc  net.Conn
+	// wmu serialises the writes: besides the responses, a connection
+	// carries the oplock breaks caused by other clients.
+	wmu sync.Mutex
 
 	negotiated bool
 	smb1Seen   bool
@@ -331,9 +334,10 @@ func (c *conn) route(r *request) (ntStatus, []byte) {
 		return c.queryInfo(r)
 	case cmdSetInfo:
 		return c.setInfo(r)
+	case cmdOplockBreak:
+		return c.oplockBreak(r)
 	}
-	// CHANGE_NOTIFY and OPLOCK_BREAK land here: directories are not
-	// watched and no oplock is ever granted.
+	// CHANGE_NOTIFY lands here: directories are not watched.
 	return statusNotSupported, nil
 }
 
@@ -357,6 +361,8 @@ func emptyBody() []byte {
 func (c *conn) send(payload []byte) error {
 	var h [4]byte
 	h[1], h[2], h[3] = byte(len(payload)>>16), byte(len(payload)>>8), byte(len(payload))
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
 	c.nc.SetWriteDeadline(time.Now().Add(writeTimeout))
 	bufs := net.Buffers{h[:], payload}
 	_, err := bufs.WriteTo(c.nc)

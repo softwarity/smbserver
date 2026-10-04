@@ -86,24 +86,45 @@ status, which is how a client that misbehaves is diagnosed.
 
 ### Mounting
 
+These are the client options the integration tests run with, and the
+reference for a program that mounts the share on its user's behalf.
+
+**Linux, kernel cifs**
+
 ```bash
-# Linux
-mount -t cifs //host/vol /mnt -o username=dev,password=secret,port=1445,vers=2.1,hard
-
-# Linux, as a Docker volume
-docker volume create --driver local -o type=cifs -o device=//host/vol \
-  -o o=addr=host,username=dev,password=secret,port=1445,vers=2.1 vol
-
-# macOS
-mount_smbfs -N //dev:secret@host:1445/vol /mnt
-
-# anywhere
-smbclient //host/vol -p 1445 -U dev%secret
+mount -t cifs //host/vol /mnt -o username=dev,password=secret,port=1445,vers=2.1,uid=1000,gid=1000,noperm,hard
 ```
 
-On Linux, `hard` matters: a soft cifs mount (the default) fails operations
-with `EAGAIN` while it reconnects, a hard one waits for the connection to come
-back.
+| Option | Why |
+|---|---|
+| `vers=2.1` | the dialect of the server; without it the client first tries SMB 3 |
+| `hard` | a soft mount (the default) fails operations with `EAGAIN` while it reconnects; a hard one waits, and the cut goes unnoticed |
+| `uid=`, `gid=`, `noperm` | the files appear as the local user's and the client does not second-guess the server on permissions |
+
+A hard mount waits for a server that is gone for good, too: unmount (lazily if
+need be) before stopping the server.
+
+**Linux, Docker volume**
+
+```bash
+docker volume create --driver local -o type=cifs -o device=//host/vol \
+  -o o=addr=host,username=dev,password=secret,port=1445,vers=2.1,hard vol
+```
+
+**macOS**
+
+```bash
+mount_smbfs -N //dev:secret@host:1445/vol /mnt
+```
+
+`-N` forbids any prompt. Nothing has to be set in `nsmb.conf`: the client
+negotiates SMB 2.1 by itself, where multichannel does not exist.
+
+**smbclient**
+
+```bash
+smbclient //host/vol -p 1445 -U dev%secret
+```
 
 ## Security
 
@@ -149,6 +170,13 @@ What it does:
   (mapped to the write permission bits), filesystem size.
 - Byte-range locks between the clients of the server, refused at once when
   they conflict.
+- Named streams, held in memory and never written to the volume: this is
+  where a macOS client puts Finder information and extended attributes, which
+  it would otherwise scatter as `._name` files. They last as long as the
+  server, within 64 MiB in total. Creating a `.DS_Store` is refused.
+- Level II oplocks, so that clients may cache what they read. They are broken
+  when the file is written through the server, and within a second when it
+  is changed behind it, by the workload that owns the volume.
 
 What it leaves out, and how clients cope:
 
@@ -156,12 +184,12 @@ What it leaves out, and how clients cope:
 |---|---|---|
 | SMB 3.x, encryption, negotiate contexts | SMB 2.1 is negotiated | All negotiate down |
 | `FSCTL_VALIDATE_NEGOTIATE_INFO` | not supported | Only required on SMB 3.0 |
-| Oplocks and leases | none granted | Clients cache less |
+| Exclusive and batch oplocks, leases | level II at most | Readers cache, writers do not |
 | Durable and persistent handles | ignored | After a cut, clients reopen by path |
 | Multichannel | not offered | |
 | Change notifications | not supported | Clients refresh on their own |
-| Named streams, Apple extensions (AAPL) | names with a stream are refused | See the matrix |
-| Extended attributes | not supported | |
+| Apple extensions (AAPL) | not negotiated | macOS uses plain named streams |
+| Extended attributes | not supported | macOS stores them in named streams |
 | Security descriptors | a fixed minimal one; setting is accepted and ignored | |
 | Server-side copy, sparse files, reparse points | not supported | Clients copy through read and write |
 | Symbolic links as such | followed on the server | |
@@ -223,8 +251,14 @@ unprivileged uid and goes through the same operations.
 | no-traces-in-volume |  |  | ❌ |  |
 <!-- matrix:end -->
 
-Windows is not covered yet: its redirector only connects to port 445, which
-the runner's own SMB server holds.
+### Speed
+
+Timings of everyday operations through a Linux cifs mount, against Samba on
+the same machine with the same mount options, from the same CI run. Best of
+three, client caches dropped before each.
+
+<!-- bench:start -->
+<!-- bench:end -->
 
 ## Tests
 
@@ -235,6 +269,8 @@ go test -run '^$' -fuzz '^FuzzMessage$' -fuzztime 1m . # one fuzz target
 go build -o bin/ ./cmd/smbserver ./test/tcpcut
 bash test/linux.sh bin results   # smbclient, cifs mount, docker volume; needs sudo
 bash test/macos.sh bin results   # mount_smbfs
+bash test/windows.sh bin results # net use, from Git Bash as administrator
+bash test/bench.sh bin results   # timings against Samba; needs sudo and samba
 ```
 
 - **Unit**: NTLMv2 against the vectors of [MS-NLMP], signing, the wire

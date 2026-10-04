@@ -191,7 +191,6 @@ func TestParsePath(t *testing.T) {
 		"":                     ".",
 		"a":                    "a",
 		`a\b\c.txt`:            "a/b/c.txt",
-		"file::$DATA":          "file",
 		"a\uF022b":             "a:b",
 		"what\uF025":           "what?",
 		"dot\uF029":            "dot.",
@@ -233,6 +232,30 @@ func TestParsePath(t *testing.T) {
 	}
 	if _, st := parsePath(string(long)); st == statusSuccess {
 		t.Error("a 256-byte component was accepted")
+	}
+}
+
+func TestParseName(t *testing.T) {
+	for _, c := range []struct {
+		in, path, stream string
+		ok               bool
+	}{
+		{"file", "file", "", true},
+		{"file::$DATA", "file", "", true},
+		{"file:meta", "file", "meta", true},
+		{"file:meta:$DATA", "file", "meta", true},
+		{`dir\file:AFP_AfpInfo:$DATA`, "dir/file", "AFP_AfpInfo", true},
+		{":onroot", ".", "onroot", true},
+		{"file:meta:$INDEX_ALLOCATION", "", "", false},
+		{"file:a:b:c", "", "", false},
+		{`dir:stream\file`, "", "", false},
+		{`..\file:meta`, "", "", false},
+		{"file:" + string(make([]byte, 300)), "", "", false},
+	} {
+		p, stream, st := parseName(c.in)
+		if (st == statusSuccess) != c.ok || c.ok && (p != c.path || stream != c.stream) {
+			t.Errorf("parseName(%q) = %q, %q, %#x", c.in, p, stream, uint32(st))
+		}
 	}
 }
 

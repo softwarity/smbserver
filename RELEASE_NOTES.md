@@ -13,5 +13,9 @@ listener you provide.
 - **Native clients.** Mounts with the Linux kernel (cifs), macOS
   (`mount_smbfs`) and `smbclient`, and resumes on its own after the connection
   is cut.
+- **Nothing left behind.** What macOS attaches to the files it copies goes to
+  named streams the server keeps in memory, not to `._` files in the volume.
+- **Fast on small files.** Clients may cache what they read, and are told
+  when a file changes, including when the workload writes it directly.
 - **Confined.** Nothing outside the served directory is reachable, symbolic
   links included; NTLMv2 authentication and signed requests are mandatory.

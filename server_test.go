@@ -56,6 +56,8 @@ type testClient struct {
 	sessionID uint64
 	treeID    uint32
 	key       []byte
+	// breaks counts the oplock break notifications received.
+	breaks int
 }
 
 func dial(t testing.TB, addr string) *testClient {
@@ -114,6 +116,11 @@ func (c *testClient) do(cmd uint16, body []byte) (ntStatus, []byte) {
 	c.t.Helper()
 	c.send(c.request(cmd, body))
 	resp, err := c.recv()
+	// Oplock breaks arrive unsolicited, ahead of the response.
+	for err == nil && isBreak(resp) {
+		c.breaks++
+		resp, err = c.recv()
+	}
 	if err != nil {
 		c.t.Fatalf("command %d: %v", cmd, err)
 	}
@@ -128,6 +135,11 @@ func (c *testClient) do(cmd uint16, body []byte) (ntStatus, []byte) {
 		c.t.Fatalf("command %d: successful response is not signed", cmd)
 	}
 	return h.status, resp
+}
+
+func isBreak(msg []byte) bool {
+	h, ok := parseHeader(msg)
+	return ok && h.command == cmdOplockBreak && h.messageID == ^uint64(0)
 }
 
 func (c *testClient) negotiate(dialects ...uint16) (ntStatus, []byte) {
@@ -1048,4 +1060,168 @@ func (c *testClient) loginReplacing(previous uint64) ntStatus {
 		c.key = hmacMD5(owf, proof)
 	}
 	return st
+}
+
+func TestOplocks(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "f"), []byte("content"), 0o644)
+	addr := startServer(t, Config{Root: root})
+	reader, writer := connect(t, addr), connect(t, addr)
+
+	open := func(c *testClient, access uint32) ([]byte, byte) {
+		body := createBody("f", access, dispOpen, 0)
+		body[3] = 0x09 // batch oplock requested, as clients do
+		st, resp := c.do(cmdCreate, body)
+		if st != statusSuccess {
+			t.Fatalf("create: %#x", uint32(st))
+		}
+		return resp[headerSize+64 : headerSize+80], resp[headerSize+2]
+	}
+	// A reader gets level II, never more; a writer gets nothing.
+	rid, level := open(reader, accessRead)
+	if level != oplockLevelII {
+		t.Fatalf("oplock granted to a reader: %d", level)
+	}
+	wid, level := open(writer, accessRW)
+	if level != oplockNone {
+		t.Fatalf("oplock granted to a writer: %d", level)
+	}
+	// No request, no oplock.
+	if _, st := reader.create("f", accessRead, dispOpen, 0); st != statusSuccess {
+		t.Fatal(st)
+	}
+
+	// A write through another connection breaks the oplock of the reader.
+	if st := writer.write(wid, 0, []byte("CHANGED")); st != statusSuccess {
+		t.Fatalf("write: %#x", uint32(st))
+	}
+	msg, err := reader.recv()
+	if err != nil || !isBreak(msg) {
+		t.Fatalf("no oplock break after a write: %x %v", msg, err)
+	}
+	if msg[headerSize+2] != oplockNone || !bytes.Equal(msg[headerSize+8:headerSize+24], rid) {
+		t.Errorf("break body: %x", msg[headerSize:])
+	}
+	// Once broken there is nothing left to break.
+	writer.write(wid, 0, []byte("again"))
+	if data, _ := reader.read(rid, 0, 100); string(data) != "againED" || reader.breaks != 0 {
+		t.Errorf("read %q after %d more breaks", data, reader.breaks)
+	}
+	// A client may acknowledge; the server answers.
+	ack := make([]byte, 24)
+	le.PutUint16(ack, 24)
+	copy(ack[8:], rid)
+	if st, _ := reader.do(cmdOplockBreak, ack); st != statusSuccess {
+		t.Errorf("acknowledgement: %#x", uint32(st))
+	}
+	reader.close(rid)
+
+	// A change made in the directory, behind the server, breaks too.
+	rid, level = open(reader, accessRead)
+	if level != oplockLevelII {
+		t.Fatalf("second oplock: %d", level)
+	}
+	os.WriteFile(filepath.Join(root, "f"), []byte("written by the workload"), 0o644)
+	reader.nc.SetReadDeadline(time.Now().Add(5 * watchInterval))
+	if msg, err := reader.recv(); err != nil || !isBreak(msg) {
+		t.Fatalf("no oplock break after an outside change: %v", err)
+	}
+	reader.nc.SetDeadline(time.Now().Add(20 * time.Second))
+
+	// Truncating through a create breaks as well.
+	rid, _ = open(reader, accessRead)
+	if _, st := writer.create("f", accessRW, dispOverwrite, 0); st != statusSuccess {
+		t.Fatal(st)
+	}
+	if msg, err := reader.recv(); err != nil || !isBreak(msg) {
+		t.Fatalf("no oplock break after a truncating open: %v", err)
+	}
+	_ = rid
+}
+
+// Named streams hold what a client writes to them without anything reaching
+// the directory.
+func TestStreams(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "f"), []byte("content"), 0o644)
+	os.Mkdir(filepath.Join(root, "d"), 0o755)
+	addr := startServer(t, Config{Root: root})
+	c := connect(t, addr)
+
+	if _, st := c.create("f:meta", accessRead, dispOpen, 0); st != statusObjectNameNotFound {
+		t.Errorf("open a stream that does not exist: %#x", uint32(st))
+	}
+	if _, st := c.create("missing:meta", accessRW, dispOpenIf, 0); st != statusObjectNameNotFound {
+		t.Errorf("stream of a missing file: %#x", uint32(st))
+	}
+	id, st := c.create("f:com.apple.quarantine:$DATA", accessRW, dispOpenIf, 0)
+	if st != statusSuccess {
+		t.Fatalf("create a stream: %#x", uint32(st))
+	}
+	if st := c.write(id, 0, []byte("0081;flag")); st != statusSuccess {
+		t.Fatalf("write: %#x", uint32(st))
+	}
+	c.close(id)
+	// Reopened, in another case: stream names are not case sensitive.
+	id, st = c.create("f:COM.APPLE.QUARANTINE", accessRW, dispOpen, 0)
+	if st != statusSuccess {
+		t.Fatalf("reopen: %#x", uint32(st))
+	}
+	if data, _ := c.read(id, 5, 100); string(data) != "flag" {
+		t.Errorf("read: %q", data)
+	}
+	if st, _ := c.do(cmdSetInfo, setInfoBody(id, fileEndOfFile, le.AppendUint64(nil, 4))); st != statusSuccess {
+		t.Errorf("truncate: %#x", uint32(st))
+	}
+	if data, _ := c.read(id, 0, 100); string(data) != "0081" {
+		t.Errorf("read after truncate: %q", data)
+	}
+	// Streams on a directory too, which is where the Finder keeps its
+	// view settings.
+	did, st := c.create("d:AFP_AfpInfo", accessRW, dispCreate, 0)
+	if st != statusSuccess {
+		t.Fatalf("stream on a directory: %#x", uint32(st))
+	}
+	c.close(did)
+
+	// The file lists its streams.
+	fid, _ := c.create("f", accessRead, dispOpen, 0)
+	st, resp := c.do(cmdQueryInfo, queryInfoBody(fid, infoFile, fileStream, 4096))
+	listing := decodeUTF16(resp[headerSize+8:])
+	if st != statusSuccess || !bytes.Contains([]byte(listing), []byte("::$DATA")) || !bytes.Contains([]byte(listing), []byte(":com.apple.quarantine:$DATA")) {
+		t.Errorf("stream listing: %#x %q", uint32(st), listing)
+	}
+
+	// Memory is bounded.
+	if st := c.write(id, maxStreamSize, []byte("x")); st != statusDiskFull {
+		t.Errorf("write beyond the stream limit: %#x", uint32(st))
+	}
+
+	// Deleting the stream, then the file with the stream that remains.
+	if st, _ := c.do(cmdSetInfo, setInfoBody(id, fileDisposition, []byte{1})); st != statusSuccess {
+		t.Errorf("delete a stream: %#x", uint32(st))
+	}
+	c.close(id)
+	if _, st := c.create("f:com.apple.quarantine", accessRead, dispOpen, 0); st != statusObjectNameNotFound {
+		t.Errorf("open a deleted stream: %#x", uint32(st))
+	}
+	c.close(fid)
+
+	// Nothing of all this is in the directory.
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 2 {
+		t.Errorf("the directory holds %v", entries)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, "f")); string(got) != "content" {
+		t.Errorf("the file changed: %q", got)
+	}
+
+	// The Finder's folder settings file is refused, an existing one is
+	// left alone.
+	if _, st := c.create(".DS_Store", accessRW, dispOpenIf, 0); st != statusAccessDenied {
+		t.Errorf("create .DS_Store: %#x", uint32(st))
+	}
+	if _, st := c.create(`d\.DS_Store`, accessRW, dispCreate, 0); st != statusAccessDenied {
+		t.Errorf("create .DS_Store in a directory: %#x", uint32(st))
+	}
 }

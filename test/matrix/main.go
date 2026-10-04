@@ -20,11 +20,6 @@ import (
 	"strings"
 )
 
-const (
-	startMarker = "<!-- matrix:start -->"
-	endMarker   = "<!-- matrix:end -->"
-)
-
 // columns fixes the order and the title of the known clients; a result file
 // with another name is appended under its own name.
 var columns = []struct{ file, title string }{
@@ -107,19 +102,33 @@ func main() {
 		fmt.Fprintln(os.Stderr, "matrix:", err)
 		os.Exit(1)
 	}
-	start := bytes.Index(readme, []byte(startMarker))
-	end := bytes.Index(readme, []byte(endMarker))
-	if start < 0 || end < start {
+	readme, ok := replace(readme, "matrix", table.Bytes())
+	if !ok {
 		fmt.Fprintln(os.Stderr, "matrix: markers not found in", os.Args[2])
 		os.Exit(1)
 	}
-	var out bytes.Buffer
-	out.Write(readme[:start+len(startMarker)])
-	out.WriteByte('\n')
-	out.Write(table.Bytes())
-	out.Write(readme[end:])
-	if err := os.WriteFile(os.Args[2], out.Bytes(), 0o644); err != nil {
+	// The timings against Samba, when the run produced them.
+	if bench, err := os.ReadFile(filepath.Join(os.Args[1], "bench.md")); err == nil {
+		readme, _ = replace(readme, "bench", bench)
+	}
+	if err := os.WriteFile(os.Args[2], readme, 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "matrix:", err)
 		os.Exit(1)
 	}
+}
+
+// replace puts content between the two marker comments of a section.
+func replace(doc []byte, section string, content []byte) ([]byte, bool) {
+	startMarker, endMarker := "<!-- "+section+":start -->", "<!-- "+section+":end -->"
+	start := bytes.Index(doc, []byte(startMarker))
+	end := bytes.Index(doc, []byte(endMarker))
+	if start < 0 || end < start {
+		return doc, false
+	}
+	var out bytes.Buffer
+	out.Write(doc[:start+len(startMarker)])
+	out.WriteByte('\n')
+	out.Write(content)
+	out.Write(doc[end:])
+	return out.Bytes(), true
 }

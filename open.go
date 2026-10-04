@@ -8,6 +8,8 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // Access mask bits ([MS-SMB2] 2.2.13.1).
@@ -53,7 +55,11 @@ type open struct {
 	tree   *tree
 	isDir  bool
 	access uint32
-	shared *sharedFile
+	// shared is nil for a handle on a named stream, which has stream
+	// and streamKey, the identity of its file, instead.
+	shared    *sharedFile
+	stream    *memStream
+	streamKey fileKey
 
 	mu     sync.Mutex
 	closed bool
@@ -65,6 +71,9 @@ type open struct {
 	f             *os.File
 	deleteOnClose bool
 	dir           *dirScan
+	// oplock tells that the handle holds a level II oplock. Guarded by
+	// the server lock.
+	oplock bool
 }
 
 // sharedFile is what the handles open on one file have in common: the
@@ -74,6 +83,11 @@ type sharedFile struct {
 	opens         []*open
 	deletePending bool
 	locks         []rangeLock
+	// holders counts the handles under oplock; size and mtime are what
+	// the file looked like when the first of them was granted.
+	holders atomic.Int32
+	size    int64
+	mtime   time.Time
 }
 
 func (o *open) location() (string, *os.File) {
@@ -95,7 +109,15 @@ func (s *server) stat(o *open) (fileInfo, ntStatus) {
 	if err != nil {
 		return fileInfo{}, errStatus(err)
 	}
-	return s.info(fi, p), statusSuccess
+	in := s.info(fi, p)
+	if o.stream != nil {
+		// A stream borrows the timestamps of its file and has a size
+		// of its own.
+		in.size = s.streamSize(o.stream)
+		in.alloc = (in.size + 4095) &^ 4095
+		in.isDir, in.attrs = false, attrNormal
+	}
+	return in, statusSuccess
 }
 
 // normalizeAccess expands the generic rights of a desired access into the
@@ -119,7 +141,7 @@ func normalizeAccess(a uint32) uint32 {
 // openFile implements CREATE for the disk share. The whole decision runs
 // under the server lock so that a pending deletion is seen atomically with
 // respect to other clients.
-func (s *server) openFile(p string, desired, disp, opts uint32) (*open, uint32, ntStatus) {
+func (s *server) openFile(r *request, p string, desired, disp, opts uint32, wantOplock bool) (*open, uint32, ntStatus) {
 	if disp > dispOverwriteIf {
 		return nil, 0, statusInvalidParameter
 	}
@@ -135,6 +157,9 @@ func (s *server) openFile(p string, desired, disp, opts uint32) (*open, uint32, 
 		}
 	}
 
+	// The oplock holders to notify, once the server lock is released.
+	var broken []*open
+	defer func() { s.notifyBreak(r.sess.conn, broken) }()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.nOpens >= maxOpens {
@@ -154,6 +179,12 @@ func (s *server) openFile(p string, desired, disp, opts uint32) (*open, uint32, 
 	case !exists:
 		if disp == dispOpen || disp == dispOverwrite || s.cfg.ReadOnly {
 			return nil, 0, s.missing(p)
+		}
+		// The Finder drops a .DS_Store in every folder it shows. The
+		// volume is not a desktop: the file is refused, which the
+		// Finder takes as it does on any read-only volume.
+		if path.Base(p) == ".DS_Store" {
+			return nil, 0, statusAccessDenied
 		}
 		if opts&optDirectory != 0 {
 			err = s.root.Mkdir(p, 0o777)
@@ -252,6 +283,7 @@ func (s *server) openFile(p string, desired, disp, opts uint32) (*open, uint32, 
 				return nil, 0, errStatus(err)
 			}
 			if truncate {
+				broken = s.takeHolders(sf)
 				if fi, err = f.Stat(); err != nil {
 					return fail(errStatus(err))
 				}
@@ -261,6 +293,8 @@ func (s *server) openFile(p string, desired, disp, opts uint32) (*open, uint32, 
 
 	o := &open{
 		id:            s.newID(),
+		sess:          r.sess,
+		tree:          r.tree,
 		isDir:         fi.IsDir(),
 		access:        access,
 		shared:        sf,
@@ -271,6 +305,11 @@ func (s *server) openFile(p string, desired, disp, opts uint32) (*open, uint32, 
 	sf.opens = append(sf.opens, o)
 	s.files[key] = sf
 	s.nOpens++
+	// Readers only: a handle that can write would break its own oplock
+	// with its first write.
+	if wantOplock && fi.Mode().IsRegular() && access&(fileWriteData|fileAppendData) == 0 {
+		s.grantOplock(o, fi.Size(), fi.ModTime())
+	}
 	return o, action, statusSuccess
 }
 
@@ -301,6 +340,10 @@ func (s *server) release(o *open) {
 	if f != nil {
 		f.Close()
 	}
+	if o.stream != nil {
+		s.releaseStream(o)
+		return
+	}
 	sf := o.shared
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -312,6 +355,7 @@ func (s *server) release(o *open) {
 		}
 	}
 	s.dropLocks(sf, o)
+	s.dropOplock(o)
 	if o.deleteOnClose {
 		sf.deletePending = true
 	}
@@ -319,8 +363,8 @@ func (s *server) release(o *open) {
 		// The deletion requested through any handle takes effect when
 		// the last one goes. Failure (a directory that filled up in
 		// the meantime) has nobody left to be reported to.
-		if sf.deletePending {
-			s.root.Remove(o.path)
+		if sf.deletePending && s.root.Remove(o.path) == nil {
+			s.dropStreams(sf.key)
 		}
 		delete(s.files, sf.key)
 	}
@@ -396,14 +440,17 @@ func (c *conn) create(r *request) (ntStatus, []byte) {
 	if r.tree.ipc {
 		return statusObjectNameNotFound, nil
 	}
-	rel, st := parsePath(name)
-	if st == statusSuccess {
-		o, action, st = c.srv.openFile(rel, desired, disp, opts)
+	rel, stream, st := parseName(name)
+	switch {
+	case st != statusSuccess:
+	case stream != "":
+		o, action, st = c.srv.openStream(r, rel, stream, desired, disp, opts)
+	default:
+		o, action, st = c.srv.openFile(r, rel, desired, disp, opts, p[3] != oplockNone && p[3] != 0xFF)
 	}
 	if st != statusSuccess {
 		return st, nil
 	}
-	o.sess, o.tree = r.sess, r.tree
 	s := r.sess
 	s.mu.Lock()
 	closed := s.closed
@@ -429,6 +476,11 @@ func (c *conn) create(r *request) (ntStatus, []byte) {
 	out := newMsg(88)
 	p = out[headerSize:]
 	le.PutUint16(p, 89)
+	c.srv.mu.Lock()
+	if o.oplock {
+		p[2] = oplockLevelII
+	}
+	c.srv.mu.Unlock()
 	le.PutUint32(p[4:], action)
 	info.putTimes(p[8:])
 	le.PutUint64(p[40:], info.alloc)

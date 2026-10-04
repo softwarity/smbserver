@@ -124,6 +124,8 @@ func FuzzMessage(f *testing.F) {
 		{[]uint16{cmdCreate, cmdSetInfo}, [][]byte{file, setInfoBody(related, fileBasic, make([]byte, 40))}},
 		{[]uint16{cmdCreate, cmdSetInfo}, [][]byte{file, setInfoBody(related, fileDisposition, []byte{1})}},
 		{[]uint16{cmdCreate, cmdLock}, [][]byte{file, lock}},
+		{[]uint16{cmdCreate, cmdWrite, cmdRead}, [][]byte{createBody("file:meta:$DATA", accessRW, dispOpenIf, 0), writeBody(related, 2, []byte("stream")), readBody(related, 0, 100)}},
+		{[]uint16{cmdCreate, cmdQueryInfo}, [][]byte{file, queryInfoBody(related, infoFile, fileStream, 4096)}},
 		{[]uint16{cmdCreate, cmdChangeNotify}, [][]byte{openDir, notify}},
 		{[]uint16{cmdIoctl}, [][]byte{ioctl}},
 		{[]uint16{cmdEcho, cmdTreeDisconnect, cmdLogoff}, [][]byte{{4, 0, 0, 0}, {4, 0, 0, 0}, {4, 0, 0, 0}}},

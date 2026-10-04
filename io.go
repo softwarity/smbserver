@@ -38,15 +38,20 @@ func (c *conn) read(r *request) (ntStatus, []byte) {
 	const dataOff = headerSize + 16
 	out := newMsg(16 + max(int(length), 1))
 	_, f := o.location()
+	var n int
 	switch {
 	case o.isDir:
 		return statusInvalidDeviceRequest, nil
+	case o.stream != nil:
+		n = c.srv.readStream(o.stream, out[dataOff:], offset)
 	case f == nil || o.access&(fileReadData|fileExecute) == 0:
 		return statusAccessDenied, nil
-	}
-	n, err := f.ReadAt(out[dataOff:], int64(offset))
-	if err != nil && err != io.EOF {
-		return errStatus(err), nil
+	default:
+		var err error
+		n, err = f.ReadAt(out[dataOff:], int64(offset))
+		if err != nil && err != io.EOF {
+			return errStatus(err), nil
+		}
 	}
 	if length > 0 && (n == 0 || uint32(n) < minimum) {
 		return statusEndOfFile, nil
@@ -77,7 +82,17 @@ func (c *conn) write(r *request) (ntStatus, []byte) {
 	switch {
 	case o.isDir:
 		return statusInvalidDeviceRequest, nil
-	case f == nil || o.access&(fileWriteData|fileAppendData) == 0 || c.srv.cfg.ReadOnly:
+	case o.access&(fileWriteData|fileAppendData) == 0 || c.srv.cfg.ReadOnly:
+		return statusAccessDenied, nil
+	case o.stream != nil:
+		if offset == math.MaxUint64 {
+			offset = c.srv.streamSize(o.stream)
+		}
+		if st := c.srv.writeStream(o.stream, data, offset); st != statusSuccess {
+			return st, nil
+		}
+		return statusSuccess, writeResponse(length)
+	case f == nil:
 		return statusAccessDenied, nil
 	}
 	// An offset of all ones means "at the end of the file".
@@ -91,13 +106,18 @@ func (c *conn) write(r *request) (ntStatus, []byte) {
 	if offset > math.MaxInt64-uint64(length) {
 		return statusInvalidParameter, nil
 	}
+	c.srv.breakOplocks(c, o.shared)
 	if _, err := f.WriteAt(data, int64(offset)); err != nil {
 		return errStatus(err), nil
 	}
+	return statusSuccess, writeResponse(length)
+}
+
+func writeResponse(count uint32) []byte {
 	out := newMsg(17)
 	le.PutUint16(out[headerSize:], 17)
-	le.PutUint32(out[headerSize+4:], length)
-	return statusSuccess, out
+	le.PutUint32(out[headerSize+4:], count)
+	return out
 }
 
 func (c *conn) flush(r *request) (ntStatus, []byte) {

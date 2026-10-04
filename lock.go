@@ -40,11 +40,13 @@ func (c *conn) lock(r *request) (ntStatus, []byte) {
 	if st != statusSuccess {
 		return st, nil
 	}
-	if o.isDir {
+	if o.isDir || o.stream != nil {
 		return statusInvalidDeviceRequest, nil
 	}
 
 	s := c.srv
+	// A byte-range lock is something a cached read would not see.
+	s.breakOplocks(c, o.shared)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sf := o.shared

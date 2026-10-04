@@ -67,6 +67,8 @@ type server struct {
 	start    time.Time
 
 	nextID atomic.Uint64
+	// oplocks counts the handles under oplock, all files together.
+	oplocks atomic.Int64
 
 	mu       sync.Mutex
 	closed   bool
@@ -74,6 +76,10 @@ type server struct {
 	sessions map[uint64]*session
 	files    map[fileKey]*sharedFile
 	nOpens   int
+	// streams holds the named streams, by file; streamBytes is their
+	// total size.
+	streams     map[fileKey]map[string]*memStream
+	streamBytes int64
 }
 
 // Serve accepts SMB connections on ln until ctx is cancelled, then closes
@@ -95,6 +101,9 @@ func Serve(ctx context.Context, ln net.Listener, cfg Config) error {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	defer s.shutdown()
+	watching, stopWatch := context.WithCancel(ctx)
+	defer stopWatch()
+	wg.Go(func() { s.watch(watching) })
 	for {
 		nc, err := ln.Accept()
 		if err != nil {
@@ -151,6 +160,7 @@ func newServer(cfg Config) (*server, error) {
 		conns:    make(map[*conn]struct{}),
 		sessions: make(map[uint64]*session),
 		files:    make(map[fileKey]*sharedFile),
+		streams:  make(map[fileKey]map[string]*memStream),
 	}
 	rand.Read(s.guid[:])
 	var seed [8]byte

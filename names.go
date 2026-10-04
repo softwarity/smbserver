@@ -62,14 +62,13 @@ func nameToWire(s string) string {
 // refused here. The second barrier is os.Root, which resolves the path
 // without ever leaving the root directory, symbolic links included.
 func parsePath(name string) (string, ntStatus) {
-	name = strings.TrimSuffix(name, "::$DATA")
 	if name == "" {
 		return ".", statusSuccess
 	}
 	parts := strings.Split(name, `\`)
 	for i, p := range parts {
-		// A colon introduces a named stream, which this server does not
-		// have. A literal colon in a file name arrives mapped.
+		// A colon introduces a named stream, which parseName has split
+		// off already. A literal colon in a file name arrives mapped.
 		if strings.ContainsRune(p, ':') {
 			return "", statusObjectNameInvalid
 		}

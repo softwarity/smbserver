@@ -45,6 +45,7 @@ const (
 	fsCaseSensitive    = 0x00000001
 	fsCasePreserved    = 0x00000002
 	fsUnicodeOnDisk    = 0x00000004
+	fsNamedStreams     = 0x00040000
 	fakeCapacityBlocks = 1 << 28 // 1 TiB in 4 KiB blocks, where statfs is unavailable
 )
 
@@ -117,7 +118,7 @@ func (c *conn) fileInfo(o *open, class byte) ([]byte, ntStatus) {
 		le.PutUint64(b[8:], in.size)
 		le.PutUint32(b[16:], in.nlink)
 		c.srv.mu.Lock()
-		if o.shared.deletePending {
+		if o.shared != nil && o.shared.deletePending || o.stream != nil && o.deleteOnClose {
 			b[20] = 1
 		}
 		c.srv.mu.Unlock()
@@ -154,16 +155,11 @@ func (c *conn) fileInfo(o *open, class byte) ([]byte, ntStatus) {
 		b = le.AppendUint32(b, 0)        // alignment
 		return append(b, name()...), statusSuccess
 	case fileStream:
-		// A file has exactly one stream, its data; a directory has none.
-		if in.isDir {
-			return nil, statusSuccess
+		key := o.streamKey
+		if o.stream == nil {
+			key = o.shared.key
 		}
-		n := encodeUTF16("::$DATA")
-		b := make([]byte, 24, 24+len(n))
-		le.PutUint32(b[4:], uint32(len(n)))
-		le.PutUint64(b[8:], in.size)
-		le.PutUint64(b[16:], in.alloc)
-		return append(b, n...), statusSuccess
+		return c.srv.streamInfo(&in, key), statusSuccess
 	case fileNetworkOpen:
 		b := make([]byte, 56)
 		in.putTimes(b)
@@ -230,11 +226,11 @@ func (c *conn) filesystemInfo(class byte) ([]byte, ntStatus) {
 	case fsAttribute:
 		// Names are stored as the client spells them, on a filesystem
 		// that tells cases apart: saying so keeps a case-sensitive client
-		// from being lied to. Named streams and ACLs are not advertised
-		// because they are not there.
+		// from being lied to. ACLs are not advertised because they are
+		// not there.
 		name := encodeUTF16("NTFS")
 		b := make([]byte, 12, 12+len(name))
-		le.PutUint32(b, fsCaseSensitive|fsCasePreserved|fsUnicodeOnDisk)
+		le.PutUint32(b, fsCaseSensitive|fsCasePreserved|fsUnicodeOnDisk|fsNamedStreams)
 		le.PutUint32(b[4:], 255)
 		le.PutUint32(b[8:], uint32(len(name)))
 		return append(b, name...), statusSuccess
@@ -328,6 +324,9 @@ func (c *conn) setInfo(r *request) (ntStatus, []byte) {
 func (c *conn) setFileInfo(o *open, class byte, data []byte) ntStatus {
 	s := c.srv
 	p, f := o.location()
+	if o.stream != nil {
+		return c.setStreamInfo(o, class, data)
+	}
 	switch class {
 	case fileBasic:
 		if len(data) < 36 {
@@ -345,6 +344,7 @@ func (c *conn) setFileInfo(o *open, class byte, data []byte) ntStatus {
 		if size > math.MaxInt64 {
 			return statusInvalidParameter
 		}
+		s.breakOplocks(c, o.shared)
 		if class == fileAllocation {
 			// Allocation is advisory, except that shrinking it below the
 			// end of the file truncates.
@@ -410,6 +410,39 @@ func (c *conn) setFileInfo(o *open, class byte, data []byte) ntStatus {
 		return statusEasNotSupported
 	}
 	return statusInvalidInfoClass
+}
+
+// setStreamInfo is setFileInfo for a handle on a named stream: it has a
+// length and can be deleted, the rest belongs to its file.
+func (c *conn) setStreamInfo(o *open, class byte, data []byte) ntStatus {
+	switch class {
+	case fileEndOfFile, fileAllocation:
+		if len(data) < 8 {
+			return statusInfoLengthMismatch
+		}
+		if o.access&(fileWriteData|fileAppendData) == 0 {
+			return statusAccessDenied
+		}
+		size := le.Uint64(data)
+		if class == fileAllocation && size >= c.srv.streamSize(o.stream) {
+			return statusSuccess
+		}
+		return c.srv.truncateStream(o.stream, size)
+	case fileDisposition, fileDispositionEx:
+		if len(data) < 1 {
+			return statusInfoLengthMismatch
+		}
+		if o.access&accessDelete == 0 {
+			return statusAccessDenied
+		}
+		c.srv.mu.Lock()
+		o.deleteOnClose = data[0]&1 != 0
+		c.srv.mu.Unlock()
+		return statusSuccess
+	case fileBasic, filePosition, fileMode:
+		return statusSuccess
+	}
+	return statusNotSupported
 }
 
 // setBasic applies FileBasicInformation: the timestamps POSIX can set, and
