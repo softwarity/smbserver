@@ -237,47 +237,46 @@ mount and has checks of its own, and the dialect can only be pinned on cifs.
 <!-- matrix:start -->
 | Operation | smbclient | Linux (cifs) | Docker volume (cifs) | macOS (mount_smbfs) | Windows (redirector) |
 |---|:-:|:-:|:-:|:-:|:-:|
-| login | ✅ |  |  |  |  |
-| bad-password-refused | ✅ |  |  | ✅ | ✅ |
-| bad-user-refused | ✅ |  |  |  |  |
-| put-get | ✅ |  |  |  |  |
-| mkdir-rmdir | ✅ |  |  |  |  |
-| rename-delete | ✅ |  |  |  |  |
-| files-owned-by-server-uid | ✅ |  |  |  |  |
-| no-escape | ✅ |  |  |  |  |
-| mount |  | ✅ |  | ✅ | ✅ |
-| mkdir |  | ✅ |  | ✅ | ✅ |
-| create |  | ✅ |  | ✅ | ✅ |
-| write |  | ✅ |  | ✅ | ✅ |
-| read |  | ✅ |  | ✅ | ✅ |
-| append |  | ✅ |  | ✅ | ✅ |
-| overwrite |  | ✅ |  | ✅ | ✅ |
-| list |  | ✅ |  | ✅ | ✅ |
-| list-many |  | ✅ |  | ✅ | ✅ |
-| stat |  | ✅ |  | ✅ | ✅ |
-| rename |  | ✅ |  | ✅ | ✅ |
-| rename-over |  | ✅ |  | ✅ | ✅ |
-| rename-dir |  | ✅ |  | ✅ | ✅ |
-| move-across-dirs |  | ✅ |  | ✅ | ✅ |
-| delete |  | ✅ |  | ✅ | ✅ |
-| rmdir |  | ✅ |  | ✅ | ✅ |
-| rmdir-nonempty-refused |  | ✅ |  | ✅ | ✅ |
-| rm-recursive |  | ✅ |  | ✅ | ✅ |
-| truncate |  | ✅ |  | ✅ | ✅ |
-| dates |  | ✅ |  | ✅ | ✅ |
-| statfs |  | ✅ |  | ✅ | ✅ |
-| names |  | ✅ |  | ✅ | ✅ |
-| big-file-hash |  | ✅ |  | ✅ | ✅ |
-| concurrent-writes |  | ✅ |  | ✅ | ✅ |
-| concurrent-files |  | ✅ |  | ✅ | ✅ |
-| cleanup |  | ✅ |  | ✅ | ✅ |
-| reconnect-after-cut-idle |  | ✅ |  | ✅ | ✅ |
-| reconnect-after-cut-during-copy |  | ✅ |  | ✅ | ✅ |
-| reconnect-after-repeated-cuts |  | ✅ |  | ✅ | ✅ |
-| unmount |  | ✅ |  | ✅ | ✅ |
-| mount-pinned-to-smb-3.0 |  | ✅ |  |  |  |
-| volume-read-write |  |  | ✅ |  |  |
-| no-traces-in-volume |  |  |  | ✅ | ✅ |
+| login | ✅ | · | · | · | · |
+| bad-password-refused | ✅ | ✅ | · | ✅ | ✅ |
+| bad-user-refused | ✅ | · | · | · | · |
+| put-get | ✅ | · | · | · | · |
+| mkdir-rmdir | ✅ | · | · | · | · |
+| rename-delete | ✅ | · | · | · | · |
+| files-owned-by-server-uid | ✅ | · | · | · | · |
+| no-escape | ✅ | · | · | · | · |
+| mount | · | ✅ | ✅ | ✅ | ✅ |
+| mkdir | · | ✅ | ✅ | ✅ | ✅ |
+| create | · | ✅ | ✅ | ✅ | ✅ |
+| write | · | ✅ | ✅ | ✅ | ✅ |
+| read | · | ✅ | ✅ | ✅ | ✅ |
+| append | · | ✅ | ✅ | ✅ | ✅ |
+| overwrite | · | ✅ | ✅ | ✅ | ✅ |
+| list | · | ✅ | ✅ | ✅ | ✅ |
+| list-many | · | ✅ | ✅ | ✅ | ✅ |
+| stat | · | ✅ | ✅ | ✅ | ✅ |
+| rename | · | ✅ | ✅ | ✅ | ✅ |
+| rename-over | · | ✅ | ✅ | ✅ | ✅ |
+| rename-dir | · | ✅ | ✅ | ✅ | ✅ |
+| move-across-dirs | · | ✅ | ✅ | ✅ | ✅ |
+| delete | · | ✅ | ✅ | ✅ | ✅ |
+| rmdir | · | ✅ | ✅ | ✅ | ✅ |
+| rmdir-nonempty-refused | · | ✅ | ✅ | ✅ | ✅ |
+| rm-recursive | · | ✅ | ✅ | ✅ | ✅ |
+| truncate | · | ✅ | ✅ | ✅ | ✅ |
+| dates | · | ✅ | ✅ | ✅ | ✅ |
+| statfs | · | ✅ | ✅ | ✅ | ✅ |
+| names | · | ✅ | ✅ | ✅ | ✅ |
+| big-file-hash | · | ✅ | ✅ | ✅ | ✅ |
+| concurrent-writes | · | ✅ | ✅ | ✅ | ✅ |
+| concurrent-files | · | ✅ | ✅ | ✅ | ✅ |
+| cleanup | · | ✅ | ✅ | ✅ | ✅ |
+| no-traces-in-volume | · | ✅ | · | ✅ | ✅ |
+| reconnect-after-cut-idle | · | ✅ | · | ✅ | ✅ |
+| reconnect-after-cut-during-copy | · | ✅ | · | ✅ | ✅ |
+| reconnect-after-repeated-cuts | · | ✅ | · | ✅ | ✅ |
+| unmount | · | ✅ | · | ✅ | ✅ |
+| mount-pinned-to-smb-3.0 | · | ✅ | · | · | · |
 <!-- matrix:end -->
 
 ### Speed
@@ -289,11 +288,11 @@ three, client caches dropped before each.
 <!-- bench:start -->
 | Operation | smbserver | Samba 4.19.5-Ubuntu | Ratio |
 |---|--:|--:|--:|
-| Create 1000 files of 4 KiB | 1.72 s | 2.27 s | 0.8 |
-| Read 1000 files of 4 KiB | 0.36 s | 0.30 s | 1.2 |
-| List a directory of 5000 files | 0.48 s | 0.80 s | 0.6 |
-| Write 100 MiB | 0.49 s | 0.47 s | 1.0 |
-| Read 100 MiB | 0.21 s | 0.19 s | 1.1 |
+| Create 1000 files of 4 KiB | 2.28 s | 2.87 s | 0.8 |
+| Read 1000 files of 4 KiB | 0.56 s | 0.45 s | 1.2 |
+| List a directory of 5000 files | 0.88 s | 1.52 s | 0.6 |
+| Write 100 MiB | 0.17 s | 0.16 s | 1.1 |
+| Read 100 MiB | 0.19 s | 0.18 s | 1.1 |
 <!-- bench:end -->
 
 ## Tests
