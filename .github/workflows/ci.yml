@@ -107,7 +107,7 @@ jobs:
         if: always()
         with:
           name: results-macos
-          path: results/*.txt
+          path: results/*
 
   windows:
     name: Windows client (redirector)

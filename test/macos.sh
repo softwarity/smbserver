@@ -57,7 +57,7 @@ cleanup() {
 	kill "$server_pid" "$relay_pid" 2>/dev/null
 	if test "$failed" != 0; then
 		echo "---- server log"
-		tail -n 150 "$work/server.log"
+		tail -n 40 "$work/server.log"
 		echo "---- relay log"
 		cat "$work/relay.log"
 	fi
@@ -122,29 +122,40 @@ if mount | grep -q " on $mnt (smbfs"; then
 	mkdir -p "$work/finder-src/sub" && printf one >"$work/finder-src/a.txt" && printf two >"$work/finder-src/sub/b.txt" &&
 		head -c 3000000 /dev/urandom >"$work/finder-src/blob" && xattr -w com.example.note hello "$work/finder-src/a.txt"
 	if osascript -e 'tell application "Finder" to get name of startup disk' >/dev/null 2>"$work/finder.err"; then
+		# One Finder action per call, so that a failure names its step.
+		finder() {
+			local what=$1
+			shift
+			if ! osascript -e 'on run argv' -e 'with timeout of 90 seconds' -e 'tell application "Finder"' "$@" \
+				-e 'end tell' -e 'end timeout' -e 'end run' "$mnt" "$work/finder-src" >/dev/null; then
+				echo "Finder step failed: $what"
+				return 1
+			fi
+		}
 		t_finder() {
-			osascript >/dev/null \
-				-e 'on run argv' \
-				-e 'set mnt to item 1 of argv' \
-				-e 'set src to item 2 of argv' \
-				-e 'with timeout of 120 seconds' \
-				-e 'tell application "Finder"' \
-				-e 'open (POSIX file mnt as alias)' \
-				-e 'duplicate (POSIX file src as alias) to (POSIX file mnt as alias)' \
-				-e 'count of items of (POSIX file (mnt & "/finder-src") as alias)' \
-				-e 'close every window' \
-				-e 'delete (POSIX file (mnt & "/finder-src/sub") as alias)' \
-				-e 'end tell' \
-				-e 'end timeout' \
-				-e 'end run' "$mnt" "$work/finder-src" || return 1
+			local before found
+			before=$(wc -l <"$work/server.log")
+			if ! { finder open -e 'open (POSIX file (item 1 of argv) as alias)' &&
+				finder duplicate -e 'duplicate (POSIX file (item 2 of argv) as alias) to (POSIX file (item 1 of argv) as alias)' &&
+				finder count -e 'count of items of (POSIX file ((item 1 of argv) & "/finder-src") as alias)' &&
+				finder close -e 'close every window' &&
+				finder delete -e 'delete (POSIX file ((item 1 of argv) & "/finder-src/sub") as alias)'; }; then
+				# What the screen showed, and what the server was asked
+				# during the step: the refusals, then the last requests.
+				screencapture -x "$results/finder.png" 2>/dev/null
+				echo "---- refusals during the Finder step"
+				tail -n +"$((before + 1))" "$work/server.log" | grep -v 'status 0x0$' | sed 's/^.*: command/command/' | sort | uniq -c | sort -rn | head -n 30
+				echo "---- last requests of the Finder step"
+				tail -n +"$((before + 1))" "$work/server.log" | tail -n 25
+				return 1
+			fi
 			diff "$work/finder-src/a.txt" "$mnt/finder-src/a.txt" && cmp "$work/finder-src/blob" "$mnt/finder-src/blob" &&
 				! test -e "$mnt/finder-src/sub" || return 1
-			local found
 			found=$(find "$root" \( -name '._*' -o -name '.DS_Store' -o -name '.Trashes' \) | head -n 5)
 			rm -rf "$mnt/finder-src"
 			test -z "$found" || { echo "left behind: $found"; return 1; }
 		}
-		record finder-copy-browse-delete t_finder
+		LIMIT=600 record finder-copy-browse-delete t_finder
 	else
 		echo "the Finder cannot be scripted here: $(tr '\n' ' ' <"$work/finder.err")"
 	fi
