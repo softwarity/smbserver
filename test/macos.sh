@@ -42,6 +42,9 @@ record() {
 		echo "$name FAIL" >>"$out"
 		failed=1
 	fi
+	# The sleep first: left behind, it would keep the output of the script
+	# open for as long as it lasts.
+	pkill -P $watchdog 2>/dev/null
 	kill $watchdog 2>/dev/null
 }
 cut() { (exec 3<>/dev/tcp/127.0.0.1/$control) 2>/dev/null; }
@@ -55,6 +58,8 @@ cleanup() {
 	if test "$failed" != 0; then
 		echo "---- server log"
 		tail -n 150 "$work/server.log"
+		echo "---- relay log"
+		cat "$work/relay.log"
 	fi
 	rm -rf "$work"
 }
@@ -65,9 +70,11 @@ SMBSERVER_TRACE=1 "$bin/smbserver" -root "$root" -addr 127.0.0.1:$port -share $s
 server_pid=$!
 "$bin/tcpcut" -listen 127.0.0.1:$relay -to 127.0.0.1:$port -control 127.0.0.1:$control >"$work/relay.log" 2>&1 &
 relay_pid=$!
-for _ in $(seq 1 50); do
-	(exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null && break
-	sleep 0.1
+for p in $port $relay; do
+	for _ in $(seq 1 50); do
+		(exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null && break
+		sleep 0.1
+	done
 done
 
 step "mount_smbfs, through the relay"

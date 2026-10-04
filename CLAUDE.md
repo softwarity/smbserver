@@ -75,6 +75,9 @@ quick test client.
 - Tests without OS-specific literal paths (`t.TempDir()`, `filepath.Join`).
 - CI rewrites the compatibility table of the README on `main`: pull before
   pushing.
+- A release is an approval of the last job of a green CI run on `main` (see
+  "Releases" in the README). Never approve one yourself; a commit that
+  should not be offered for release says `[skip release]`.
 
 ## Testing
 

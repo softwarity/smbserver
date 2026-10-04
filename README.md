@@ -329,9 +329,35 @@ docker run --rm --privileged -e SKIP_DOCKER=1 -e BIG_MB=64 \
 
 ## Releases
 
-`RELEASE_NOTES.md` holds the notes; the `Release` workflow turns its
-`NEXT RELEASE` section into a version, tags it and publishes the GitHub
-Release.
+A release is an approval on a green run. Every CI run on `main` ends on a job
+named "Release (approve to publish)", waiting on the `release` environment.
+Approving it, in the page of the run (Review deployments) or from a terminal,
+releases the commit that run tested: the `NEXT RELEASE` section of
+`RELEASE_NOTES.md` becomes the new version, the commit is tagged `vX.Y.Z` and
+the GitHub Release is published from those notes.
+
+```bash
+gh run list -R softwarity/smbserver --branch main --status waiting
+gh api -X POST repos/softwarity/smbserver/actions/runs/<run-id>/pending_deployments \
+  -f 'environment_ids[]=<env-id>' -f state=approved -f comment=minor
+```
+
+The bump rides in the comment of the approval: empty is a patch, `minor` or
+`major` say so. Not approving costs nothing: the next push to `main` cancels
+the waiting run. A commit whose message says `[skip release]` offers none.
+Release notes pushed with `[skip ci]` after the run do not block it.
+
+What the repository needs, once (Settings > Environments > `release`):
+
+- **Required reviewers**: whoever may release. Without one the job stops with
+  "nobody approved this release", since GitHub creates an unprotected
+  environment the first time a job names it.
+- **Deployment branches**: `main` only.
+- Environment variable `RELEASE_APP_ID` and environment secret
+  `RELEASE_APP_PRIVATE_KEY`: the GitHub App the Softwarity repositories
+  release with, installed on this repository with Contents read and write.
+  The job mints a one-hour token from it to push the version commit and the
+  tag and to create the Release.
 
 ## License
 

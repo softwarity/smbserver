@@ -164,3 +164,120 @@ jobs:
           # Main may have moved while the tests ran; the table is then the
           # business of the run that follows.
           git push || echo "main moved on, leaving the table to the next run"
+
+  # A release is an approval on a green run, not a workflow of its own. Every
+  # run on main ends here, waiting on the `release` environment, which
+  # requires a reviewer: nothing happens until somebody approves, and what is
+  # then released is the commit this run tested. The bump rides in the comment
+  # of the approval: empty is a patch, "minor" or "major" say so. Not approving
+  # costs nothing; the next push to main cancels the waiting run. A commit
+  # whose message says [skip release] offers none.
+  release:
+    name: Release (approve to publish)
+    needs: [fuzz, linux, macos, windows, matrix]
+    if: >-
+      !cancelled()
+      && needs.fuzz.result == 'success' && needs.linux.result == 'success'
+      && needs.macos.result == 'success' && needs.windows.result == 'success'
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip release]')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Read the approval
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          approval=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/approvals" \
+            --jq '[.[] | select(.state == "approved") | select(any(.environments[]; .name == "release"))] | last')
+          # GitHub creates an unprotected environment the first time a job
+          # names one, and an unprotected one would release every push.
+          if [ -z "$approval" ] || [ "$approval" = "null" ]; then
+            echo "::error::nobody approved this release: the 'release' environment must require a reviewer (Settings > Environments > release)"
+            exit 1
+          fi
+          comment=$(jq -r '.comment // ""' <<<"$approval")
+          bump=$(printf '%s' "$comment" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+          case "$bump" in
+            "") bump="patch" ;;
+            patch|minor|major) ;;
+            *) echo "::error::the approval comment must be empty (patch), minor or major, not '$comment'"; exit 1 ;;
+          esac
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+          echo "approved as a $bump release"
+      # The version commit and the tag are pushed by the release App, whose
+      # key is a secret of the environment: it reaches this approved job and
+      # no other.
+      - id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: softwarity
+          repositories: smbserver
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.token.outputs.token }}
+      # main must still be the commit this run tested, give or take what
+      # carries no code: the table the matrix job just wrote into the README,
+      # and release notes pushed with [skip ci].
+      - name: main is still the tested commit
+        env:
+          TESTED: ${{ github.sha }}
+        run: |
+          set -e
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$TESTED" ]; then
+            moved=$(git diff --name-only "$TESTED" "$head" | grep -vxE 'README\.md|RELEASE_NOTES\.md' || true)
+            if [ -n "$moved" ]; then
+              echo "::error::main is at ${head::7} but this run tested ${TESTED::7}, and the difference is more than documentation:"
+              echo "$moved" | sed 's/^/         /'
+              echo "         Run the pipeline on main again, then approve that one."
+              exit 1
+            fi
+            echo "main moved from ${TESTED::7} to ${head::7} by documentation only; releasing ${head::7} with this run's green"
+          fi
+      - name: Commit as the App
+        env:
+          SLUG: ${{ steps.token.outputs.app-slug }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh api "users/${SLUG}[bot]" --jq .id)
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+      # Renames "## NEXT RELEASE" of RELEASE_NOTES.md to the new version,
+      # reopens an empty one, commits and tags, all locally. Pinned to a
+      # commit like every action that is not GitHub's own.
+      - name: Release notes, version commit and tag
+        id: flow
+        uses: softwarity/release-flow@58d6aa0216d97976a623edca2fe484eababf5b57
+        with:
+          bump: ${{ steps.bump.outputs.bump }}
+          language: tag
+          push: "false"
+          create-release: "false"
+      # [skip ci]: the commit changes one Markdown file, and a pipeline
+      # started by it would end on another release offer for the same code.
+      - name: Push the version commit and the tag, create the GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          VERSION: ${{ steps.flow.outputs.version }}
+          TAG: ${{ steps.flow.outputs.tag }}
+          NOTES: ${{ steps.flow.outputs.notes }}
+        run: |
+          set -e
+          git commit --amend --reset-author -m "$VERSION [skip ci]"
+          git tag -f "$TAG"
+          git push origin HEAD:main "refs/tags/$TAG"
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          echo "## Released $VERSION" >> "$GITHUB_STEP_SUMMARY"
