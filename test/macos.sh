@@ -25,10 +25,16 @@ out=$results/macos-smbfs.txt
 : >"$out"
 
 step() { printf '\n== %s\n' "$*"; }
+# record <name> <command...>: runs the check under a time limit, since an
+# operation on a mount whose server does not answer waits forever.
 record() {
-	local name=$1
+	local name=$1 pid watchdog
 	shift
-	if "$@"; then
+	("$@") &
+	pid=$!
+	(sleep "${LIMIT:-300}" && echo "timed out: $name" && kill -9 $pid) 2>/dev/null &
+	watchdog=$!
+	if wait $pid 2>/dev/null; then
 		echo "ok $name"
 		echo "$name ok" >>"$out"
 	else
@@ -36,24 +42,26 @@ record() {
 		echo "$name FAIL" >>"$out"
 		failed=1
 	fi
+	kill $watchdog 2>/dev/null
 }
 cut() { (exec 3<>/dev/tcp/127.0.0.1/$control) 2>/dev/null; }
 
 cleanup() {
 	for m in "$mnt" "$work/bad"; do
-		umount "$m" 2>/dev/null || diskutil unmount force "$m" >/dev/null 2>&1
+		(umount "$m" 2>/dev/null || diskutil unmount force "$m" >/dev/null 2>&1) &
 	done
+	sleep 5
 	kill "$server_pid" "$relay_pid" 2>/dev/null
 	if test "$failed" != 0; then
 		echo "---- server log"
-		tail -n 300 "$work/server.log"
+		tail -n 150 "$work/server.log"
 	fi
 	rm -rf "$work"
 }
 trap cleanup EXIT
 
 mkdir -p "$root" "$mnt" "$work/bad"
-"$bin/smbserver" -root "$root" -addr 127.0.0.1:$port -share $share -user $user -password "$password" -v >"$work/server.log" 2>&1 &
+SMBSERVER_TRACE=1 "$bin/smbserver" -root "$root" -addr 127.0.0.1:$port -share $share -user $user -password "$password" -v >"$work/server.log" 2>&1 &
 server_pid=$!
 "$bin/tcpcut" -listen 127.0.0.1:$relay -to 127.0.0.1:$port -control 127.0.0.1:$control >"$work/relay.log" 2>&1 &
 relay_pid=$!
@@ -77,7 +85,10 @@ record bad-password-refused t_bad_password
 record mount t_mount
 
 if mount | grep -q " on $mnt (smbfs"; then
-	BIG_MB=${BIG_MB:-1024} bash "$here/fsops.sh" "$mnt" "$work/fsops.txt" || failed=1
+	t_fsops() { BIG_MB=${BIG_MB:-1024} bash "$here/fsops.sh" "$mnt" "$work/fsops.txt"; }
+	LIMIT=900 record operations t_fsops
+	# The operations report one by one; their summary line is not a row.
+	sed -i '' '/^operations /d' "$out"
 	cat "$work/fsops.txt" >>"$out"
 
 	step "no trace left in the volume"
