@@ -137,9 +137,9 @@ if mount | grep -q " on $mnt (smbfs"; then
 			before=$(wc -l <"$work/server.log")
 			if ! { finder open -e 'open (POSIX file (item 1 of argv) as alias)' &&
 				finder duplicate -e 'duplicate (POSIX file (item 2 of argv) as alias) to (POSIX file (item 1 of argv) as alias)' &&
-				finder count -e 'count of items of (POSIX file ((item 1 of argv) & "/finder-src") as alias)' &&
-				finder close -e 'close every window' &&
-				finder delete -e 'delete (POSIX file ((item 1 of argv) & "/finder-src/sub") as alias)'; }; then
+				finder count -e 'count (every item of folder (POSIX file ((item 1 of argv) & "/finder-src") as alias))' &&
+				finder rename -e 'set name of (POSIX file ((item 1 of argv) & "/finder-src/a.txt") as alias) to "renamed.txt"' &&
+				finder close -e 'close every window'; }; then
 				# What the screen showed, and what the server was asked
 				# during the step: the refusals, then the last requests.
 				screencapture -x "$results/finder.png" 2>/dev/null
@@ -149,13 +149,15 @@ if mount | grep -q " on $mnt (smbfs"; then
 				tail -n +"$((before + 1))" "$work/server.log" | tail -n 25
 				return 1
 			fi
-			diff "$work/finder-src/a.txt" "$mnt/finder-src/a.txt" && cmp "$work/finder-src/blob" "$mnt/finder-src/blob" &&
-				! test -e "$mnt/finder-src/sub" || return 1
+			# Deleting is left to the shell: on a network volume the Finder
+			# asks for confirmation, whatever the server.
+			diff "$work/finder-src/a.txt" "$mnt/finder-src/renamed.txt" && cmp "$work/finder-src/blob" "$mnt/finder-src/blob" &&
+				test "$(cat "$mnt/finder-src/sub/b.txt")" = two && ! test -e "$mnt/finder-src/a.txt" || return 1
 			found=$(find "$root" \( -name '._*' -o -name '.DS_Store' -o -name '.Trashes' \) | head -n 5)
 			rm -rf "$mnt/finder-src"
 			test -z "$found" || { echo "left behind: $found"; return 1; }
 		}
-		LIMIT=600 record finder-copy-browse-delete t_finder
+		LIMIT=600 record finder-browse-copy-rename t_finder
 	else
 		echo "the Finder cannot be scripted here: $(tr '\n' ' ' <"$work/finder.err")"
 	fi
